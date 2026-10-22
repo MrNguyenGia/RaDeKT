@@ -1,0 +1,310 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Be Vietnam Pro', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: #1e293b;
+    background-color: #f8fafc;
+  }
+}
+
+/* ========================================================================= */
+/* CSS @media print CHUẨN A4 CHO BỘ GIÁO DỤC VÀ ĐÀO TẠO                      */
+/* Khổ A4: lề trái 25mm, phải 15mm, trên 20mm, dưới 20mm, Times New Roman 13pt */
+/* ========================================================================= */
+
+@page {
+  size: A4 portrait;
+  margin-left: 25mm;
+  margin-right: 15mm;
+  margin-top: 20mm;
+  margin-bottom: 20mm;
+  @bottom-center {
+    content: "Trang " counter(page) " / " counter(pages);
+    font-family: 'Times New Roman', Times, serif;
+    font-size: 11pt;
+    color: #333333;
+  }
+}
+
+@page landscape-page {
+  size: A4 landscape;
+  margin: 15mm 15mm 15mm 15mm;
+  @bottom-center {
+    content: "Trang " counter(page) " / " counter(pages);
+    font-family: 'Times New Roman', Times, serif;
+    font-size: 11pt;
+    color: #333333;
+  }
+}
+
+#stem-exam-print-mount {
+  display: none;
+}
+
+@media print {
+  /* Khổ ngang cho Ma trận và Bản đặc tả */
+  .print-landscape {
+    page: landscape-page !important;
+    break-before: page !important;
+    page-break-before: always !important;
+  }
+
+  /* Khi in qua trình quản lý xuất bản chuyên dụng */
+  body.is-printing-custom > *:not(#stem-exam-print-mount) {
+    display: none !important;
+  }
+
+  body.is-printing-custom #stem-exam-print-mount {
+    display: block !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-family: 'Times New Roman', Times, serif !important;
+    font-size: 13pt !important;
+    line-height: 1.5 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Ẩn giao diện người dùng nếu in trực tiếp */
+  header,
+  footer,
+  aside,
+  [aria-label="Cột thiết lập cấu hình đề"],
+  button,
+  .print-hidden,
+  .no-print {
+    display: none !important;
+  }
+
+  /* Tránh cắt đôi câu hỏi giữa 2 trang giấy */
+  .question-item,
+  .print-avoid-break {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+    margin-bottom: 12pt !important;
+  }
+
+  /* Ngắt sang trang mới giữa các phần và mã đề */
+  .print-page-break {
+    break-before: page !important;
+    page-break-before: always !important;
+  }
+
+  /* Đầu đề 2 cột chuẩn BGD */
+  .print-header-grid {
+    display: grid !important;
+    grid-template-columns: 45% 55% !important;
+    gap: 12pt !important;
+    margin-bottom: 12pt !important;
+    font-family: 'Times New Roman', Times, serif !important;
+  }
+
+  .header-col-left {
+    text-align: center !important;
+  }
+  .dept-name {
+    font-size: 11pt !important;
+    font-weight: bold !important;
+    text-transform: uppercase !important;
+  }
+  .school-name {
+    font-size: 12pt !important;
+    font-weight: bold !important;
+    text-transform: uppercase !important;
+    margin-top: 2pt !important;
+  }
+  .sub-year {
+    font-size: 10pt !important;
+    font-style: italic !important;
+    margin-top: 2pt !important;
+  }
+  .divider-line {
+    width: 80pt !important;
+    height: 1pt !important;
+    background-color: #000 !important;
+    margin: 4pt auto 0 auto !important;
+  }
+
+  .header-col-right {
+    text-align: center !important;
+  }
+  .exam-title {
+    font-size: 13pt !important;
+    font-weight: bold !important;
+    text-transform: uppercase !important;
+  }
+  .exam-subject {
+    font-size: 12pt !important;
+    font-weight: bold !important;
+    margin-top: 2pt !important;
+  }
+  .exam-duration {
+    font-size: 11pt !important;
+    font-style: italic !important;
+    margin-top: 2pt !important;
+  }
+  .version-badge {
+    font-size: 12pt !important;
+    font-weight: bold !important;
+    text-align: right !important;
+    margin-top: 6pt !important;
+  }
+
+  /* Hộp thông tin học sinh và chấm điểm */
+  .student-info-box {
+    display: grid !important;
+    grid-template-columns: 70% 30% !important;
+    border: 1pt solid #000 !important;
+    margin-bottom: 10pt !important;
+    font-family: 'Times New Roman', Times, serif !important;
+  }
+  .student-left {
+    padding: 6pt 8pt !important;
+    border-right: 1pt solid #000 !important;
+    font-size: 11pt !important;
+  }
+  .student-row {
+    display: flex !important;
+    align-items: baseline !important;
+    margin-bottom: 6pt !important;
+  }
+  .dotted-fill {
+    flex: 1 !important;
+    border-bottom: 1pt dotted #000 !important;
+    margin-left: 4pt !important;
+    height: 12pt !important;
+    display: inline-block !important;
+  }
+  .student-row-split {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10pt !important;
+  }
+  .split-item {
+    display: flex !important;
+    align-items: baseline !important;
+  }
+  .student-right {
+    padding: 6pt !important;
+    text-align: center !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: flex-start !important;
+  }
+  .score-title {
+    font-size: 10pt !important;
+    font-weight: bold !important;
+  }
+
+  .exam-instruction {
+    font-size: 10pt !important;
+    font-style: italic !important;
+    margin-bottom: 12pt !important;
+  }
+
+  .part-title {
+    font-size: 12pt !important;
+    font-weight: bold !important;
+    margin: 14pt 0 8pt 0 !important;
+    text-transform: uppercase !important;
+  }
+
+  .q-content {
+    font-size: 13pt !important;
+    line-height: 1.5 !important;
+  }
+  .q-score {
+    font-weight: normal !important;
+    font-style: italic !important;
+    font-size: 11pt !important;
+  }
+
+  .options-grid {
+    margin-left: 20pt !important;
+    margin-top: 4pt !important;
+  }
+  .opt-item {
+    font-size: 13pt !important;
+    margin: 2pt 0 !important;
+  }
+
+  .statements-list,
+  .pairs-list {
+    margin-left: 20pt !important;
+    margin-top: 4pt !important;
+  }
+  .st-item,
+  .pair-item {
+    font-size: 13pt !important;
+    margin: 3pt 0 !important;
+  }
+
+  .exam-footer-line {
+    text-align: center !important;
+    font-weight: bold !important;
+    font-size: 12pt !important;
+    margin: 24pt 0 12pt 0 !important;
+  }
+
+  .ai-notice-line {
+    text-align: center !important;
+    font-size: 9pt !important;
+    font-style: italic !important;
+    color: #444 !important;
+    margin-top: 4pt !important;
+  }
+
+  .section-title {
+    font-size: 14pt !important;
+    font-weight: bold !important;
+    text-align: center !important;
+    margin-bottom: 12pt !important;
+    text-transform: uppercase !important;
+  }
+
+  .sub-section-title {
+    font-size: 12pt !important;
+    font-weight: bold !important;
+    margin: 14pt 0 8pt 0 !important;
+  }
+
+  .solution-item,
+  .scoring-item {
+    font-size: 12pt !important;
+    line-height: 1.5 !important;
+    margin-bottom: 8pt !important;
+  }
+
+  /* Bảng in sắc nét */
+  .print-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    margin-bottom: 14pt !important;
+    font-family: 'Times New Roman', Times, serif !important;
+    font-size: 11pt !important;
+  }
+  .print-table th,
+  .print-table td {
+    border: 1pt solid #000 !important;
+    padding: 5pt 6pt !important;
+    vertical-align: top !important;
+  }
+  .print-table th {
+    background-color: #f2f2f2 !important;
+    font-weight: bold !important;
+    text-align: center !important;
+  }
+
+  /* In KaTeX rõ nét */
+  .katex {
+    font-size: 1.05em !important;
+    text-rendering: geometricPrecision !important;
+  }
+  .katex-html {
+    display: inline-block !important;
+  }
+}
