@@ -4,7 +4,7 @@ import { Level, Question, QuestionType, QuestionFigure, QuestionImageData } from
 import { MathText } from '../MathText';
 import { FigureView } from '../FigureView';
 import { ImageAttachmentEditor } from './ImageAttachmentEditor';
-import { renderFigureToSvg } from '../../lib/figureRenderer';
+import { figureToSvg } from '../../lib/figureRenderer';
 import {
   generateCubicGraphSvg,
   generateParabolaSvg,
@@ -68,7 +68,7 @@ export const QuestionModal: React.FC<QuestionModalProps> = ({
       if (!obj || typeof obj !== 'object' || !obj.kind) {
         return {
           parsedFigure: null,
-          figureJsonError: 'JSON cần có trường "kind": "function-graph" | "geometry" | "variation-table" | "data-chart"',
+          figureJsonError: 'JSON cần có trường "kind": "function-graph" | "geometry" | "variation-table" | "sign-table" | "data-chart"',
         };
       }
       return { parsedFigure: obj as QuestionFigure, figureJsonError: null };
@@ -84,7 +84,7 @@ export const QuestionModal: React.FC<QuestionModalProps> = ({
   const [options, setOptions] = useState<string[]>(
     initialQuestion.options && initialQuestion.options.length > 0
       ? initialQuestion.options
-      : ['A. Lựa chọn A', 'B. Lựa chọn B', 'C. Lựa chọn C', 'D. Lựa chọn D']
+      : ['A. ', 'B. ', 'C. ', 'D. ']
   );
 
   // Statements for TRUE_FALSE
@@ -118,7 +118,7 @@ export const QuestionModal: React.FC<QuestionModalProps> = ({
     e.preventDefault();
 
     const finalFigure = parsedFigure || undefined;
-    const finalSvg = finalFigure ? renderFigureToSvg(finalFigure) : (svgDiagram.trim() || undefined);
+    const finalSvg = finalFigure ? figureToSvg(finalFigure) : (svgDiagram.trim() || undefined);
 
     onSave({
       ...initialQuestion,
@@ -465,7 +465,7 @@ export const QuestionModal: React.FC<QuestionModalProps> = ({
                       updated[i] = `${['A', 'B', 'C', 'D'][i]}. ${e.target.value}`;
                       setOptions(updated);
                     }}
-                    placeholder={`Phương án ${['A', 'B', 'C', 'D'][i]}`}
+                    placeholder={`Nhập nội dung phương án ${['A', 'B', 'C', 'D'][i]}...`}
                     className="flex-1 px-3 py-1.5 border border-slate-300 rounded-lg text-xs"
                   />
                   <button

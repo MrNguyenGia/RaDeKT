@@ -8,8 +8,11 @@ import {
   compareExamWithImportedMatrix,
 } from '../../lib/matrix';
 import { MathText } from '../MathText';
+import { DocPage } from '../common/DocPage';
+import { formatScore } from '../../config';
 
 interface MatrixSpecTabProps {
+
   config: ExamConfig;
   blueprint: BlueprintSlot[];
   questions?: Question[];
@@ -60,17 +63,19 @@ export const MatrixSpecTab: React.FC<MatrixSpecTabProps> = ({
   }, [questions, config.importedMatrix]);
 
   return (
-    <div className="space-y-5 max-w-[210mm] mx-auto bg-white p-6 sm:p-10 rounded-xl border border-slate-300 shadow-md font-serif print:shadow-none print:border-none print:p-0">
-      {/* Header & Sub-tab Switch */}
-      <div className="border-b-2 border-slate-900 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h2 className="font-bold uppercase text-base sm:text-lg text-slate-950">
-            MA TRẬN & BẢN ĐẶC TẢ ĐỀ KIỂM TRA
-          </h2>
-          <p className="text-xs text-slate-600 italic">
-            Quy chuẩn đánh giá 2 chiều theo khung năng lực Chương trình GDPT 2018
-          </p>
-        </div>
+    <div className="doc-viewport-bg py-4 px-2 sm:px-4">
+      <DocPage footerText="Ma trận & Bản đặc tả theo chuẩn GDPT 2018">
+        {/* Header & Sub-tab Switch */}
+        <div className="border-b-2 border-slate-900 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 className="font-bold uppercase text-base sm:text-lg text-slate-950">
+              MA TRẬN & BẢN ĐẶC TẢ ĐỀ KIỂM TRA
+            </h2>
+            <p className="text-xs text-slate-600 italic">
+              Quy chuẩn đánh giá 2 chiều theo khung năng lực Chương trình GDPT 2018
+            </p>
+          </div>
+
 
         {/* Nút chuyển đổi giữa Ma trận và Bản đặc tả */}
         <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200 print:hidden shrink-0">
@@ -236,7 +241,7 @@ export const MatrixSpecTab: React.FC<MatrixSpecTabProps> = ({
                                 {cell.count} câu
                               </div>
                               <div className="text-[11px] text-blue-700 font-semibold">
-                                {cell.score.toFixed(2)}đ ({cell.percentage}%)
+                                {formatScore(cell.score)}đ ({formatScore(cell.percentage)}%)
                               </div>
                               {/* Nút bấm nhảy đến câu tương ứng */}
                               {cell.questionNumbers.length > 0 && (
@@ -268,7 +273,7 @@ export const MatrixSpecTab: React.FC<MatrixSpecTabProps> = ({
                     <td className="py-2 px-3 bg-slate-50/50 align-top font-bold text-slate-900">
                       <div>{row.total.count} câu</div>
                       <div className="text-[11px] text-blue-900 font-semibold">
-                        {row.total.score.toFixed(2)}đ ({row.total.percentage}%)
+                        {formatScore(row.total.score)}đ ({formatScore(row.total.percentage)}%)
                       </div>
                     </td>
                   </tr>
@@ -289,14 +294,14 @@ export const MatrixSpecTab: React.FC<MatrixSpecTabProps> = ({
                       0
                     );
                     const colPct = matrixSummary.grandTotal.score > 0
-                      ? ((colScore / matrixSummary.grandTotal.score) * 100).toFixed(1)
+                      ? formatScore((colScore / matrixSummary.grandTotal.score) * 100)
                       : '0';
 
                     return (
                       <td key={lvl} className="py-2.5 px-2 border-r border-slate-300">
                         <div className="text-blue-900 font-bold">{colCount} câu</div>
                         <div className="text-[11px] text-slate-700 font-medium">
-                          {colScore.toFixed(2)}đ ({colPct}%)
+                          {formatScore(colScore)}đ ({colPct}%)
                         </div>
                       </td>
                     );
@@ -304,7 +309,7 @@ export const MatrixSpecTab: React.FC<MatrixSpecTabProps> = ({
                   <td className="py-2.5 px-3 bg-slate-200/80 font-bold text-blue-950 text-sm">
                     <div>{matrixSummary.grandTotal.count} câu</div>
                     <div className="text-xs text-blue-900">
-                      {matrixSummary.grandTotal.score.toFixed(2)}đ (100%)
+                      {formatScore(matrixSummary.grandTotal.score)}đ (100%)
                     </div>
                   </td>
                 </tr>
@@ -387,7 +392,7 @@ export const MatrixSpecTab: React.FC<MatrixSpecTabProps> = ({
                       </div>
                     </td>
                     <td className="py-2.5 px-2.5 text-right font-bold text-blue-800">
-                      {row.totalScore.toFixed(2)}đ
+                      {formatScore(row.totalScore)}đ
                     </td>
                   </tr>
                 ))}
@@ -401,7 +406,7 @@ export const MatrixSpecTab: React.FC<MatrixSpecTabProps> = ({
                     {effectiveSlots.length} câu
                   </td>
                   <td className="py-2.5 px-2.5 text-right text-blue-900">
-                    {effectiveSlots.reduce((sum, s) => sum + s.score, 0).toFixed(2)}đ
+                    {formatScore(effectiveSlots.reduce((sum, s) => sum + s.score, 0))}đ
                   </td>
                 </tr>
               </tfoot>
@@ -409,6 +414,7 @@ export const MatrixSpecTab: React.FC<MatrixSpecTabProps> = ({
           </div>
         </div>
       )}
+      </DocPage>
     </div>
   );
 };

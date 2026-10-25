@@ -243,8 +243,11 @@ export type FunctionGraphFigure = {
   functions: { expr: string; label?: string }[];
   xRange: [number, number];
   yRange?: [number, number];
-  points?: { x: number; y: number; label?: string }[];
+  points?: { x: number; y: number; label?: string; isExtremum?: boolean }[];
   showGrid?: boolean;
+  studentVisibleLabels?: string[]; // Danh sách nhãn được phép hiển thị cho học sinh (tránh lộ đáp án)
+  hideFormula?: boolean; // Không in công thức hàm số lên đồ thị
+  isImplicit?: boolean; // Đồ thị hàm ẩn (không cho công thức)
 };
 
 export type GeometryFigure = {
@@ -265,6 +268,14 @@ export type VariationTableFigure = {
   derivativeSigns?: ('+' | '-')[];
 };
 
+export type SignTableFigure = {
+  kind: 'sign-table';
+  rowLabel: string; // ví dụ "f'(x)" hoặc "y'"
+  xValues: string[];
+  intervalSigns: ('+' | '-')[]; // độ dài = xValues.length - 1
+  pointMarks: ('0' | '||' | '')[]; // độ dài = xValues.length - 2, tương ứng các mốc ở giữa
+};
+
 export type DataChartFigure = {
   kind: 'data-chart';
   chartType: 'bar' | 'line' | 'pie';
@@ -278,6 +289,7 @@ export type QuestionFigure =
   | FunctionGraphFigure
   | GeometryFigure
   | VariationTableFigure
+  | SignTableFigure
   | DataChartFigure;
 
 export interface QuestionImageData {
@@ -309,11 +321,15 @@ export interface Question {
   reviewNote?: string; // Ghi chú cảnh báo/lưu ý cho giáo viên
   isTeacherWritten: boolean; // Do giáo viên tự viết hay AI sinh ra
   figure?: QuestionFigure; // Cấu trúc dữ liệu hình vẽ chuẩn để sinh SVG bằng code
+  figureKind?: string; // Loại figure nếu AI trả về qua cặp figureKind/figureJson
+  figureJson?: string; // Chuỗi JSON thô của figure
   svgDiagram?: string; // Mã SVG hình vẽ dự phòng
   imageData?: QuestionImageData; // Ảnh chèn do giáo viên tải lên (ưu tiên cao hơn figure)
   rawAiResponse?: any; // Phản hồi gốc của Gemini cho câu đó (trước mọi bước xử lý/sửa)
   rawParseError?: string; // Lỗi parse nếu có
   regenerationCount?: number; // Số lần đã tự sinh lại
+  aiSolvedAnswer?: string; // Đáp số do AI giải độc lập ra (Tiêu chí 8)
+  isSolverMatch?: boolean; // AI giải độc lập khớp đáp án đề thi (true/false)
 }
 
 /**

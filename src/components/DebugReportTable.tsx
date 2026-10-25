@@ -15,8 +15,8 @@ import {
 } from 'lucide-react';
 import { useExamStore } from '../store';
 import { Question, QuestionFigure, QuestionImageData } from '../types';
-import { runCodeQualityCheck, QualityIssue } from '../lib/validate';
-import { renderFigureToSvg } from '../lib/figureRenderer';
+import { runCodeQualityCheck, QualityIssue, questionNeedsFigure } from '../lib/validate';
+import { figureToSvg } from '../lib/figureRenderer';
 
 interface DebugReportTableProps {
   isOpen: boolean;
@@ -59,9 +59,9 @@ function inspectQuestionFigure(
 
   if (figure) {
     try {
-      const svg = renderFigureToSvg(figure);
-      if (svg.includes('Không thể tạo hình:')) {
-        const match = svg.match(/Không thể tạo hình: ([^<]+)/);
+      const svg = figureToSvg(figure);
+      if (svg.includes('Hình vẽ gặp lỗi') || svg.includes('Không thể tạo hình:')) {
+        const match = svg.match(/(?:Hình vẽ gặp lỗi:\s*|Không thể tạo hình:\s*)([^<]+)/);
         return {
           kind: figure.kind,
           status: 'ERROR',
@@ -158,8 +158,7 @@ export const DebugReportTable: React.FC<DebugReportTableProps> = ({ isOpen, onCl
     if (!currentExam || !currentExam.questions) return [];
 
     return currentExam.questions.map((q, idx) => {
-      const qText = (q.question || '').toLowerCase();
-      const mentionsFigure = FIGURE_KEYWORDS.some((kw) => qText.includes(kw));
+      const mentionsFigure = questionNeedsFigure(q);
       const figInspection = inspectQuestionFigure(q.figure, q.svgDiagram, q.imageData);
       const optionsText = getValidOptionsText(q);
       const qIssues = allIssues.filter((i) => i.questionId === q.id);
@@ -229,8 +228,8 @@ export const DebugReportTable: React.FC<DebugReportTableProps> = ({ isOpen, onCl
     text += `- Số câu có cảnh báo/lỗi validate: ${questionsWithIssues}\n`;
     text += `- Số câu đã từng tự sinh lại: ${questionsRegenerated}\n\n`;
 
-    text += `| Số câu | slotId | Dạng | Mức | Nhắc hình/bảng | Figure Gemini | Trạng thái vẽ | Số phương án | Lỗi validate | Số lần sinh lại |\n`;
-    text += `|:---:|:---|:---:|:---:|:---:|:---|:---|:---:|:---|:---:|\n`;
+    text += `| Số câu | slotId | Dạng | Mức | Nhắc hình/bảng | Figure Gemini | Trạng thái vẽ | Số phương án | Tự giải độc lập (T8) | Lỗi validate | Số lần sinh lại |\n`;
+    text += `|:---:|:---|:---:|:---:|:---:|:---|:---|:---:|:---|:---|:---:|\n`;
 
     rowData.forEach((r) => {
       const issuesText =
@@ -238,7 +237,13 @@ export const DebugReportTable: React.FC<DebugReportTableProps> = ({ isOpen, onCl
           ? 'Đạt (0 lỗi)'
           : r.issues.map((i) => `TC${i.criterion}[${i.severity}]: ${i.message}`).join('; ');
 
-      text += `| Câu ${r.index} | ${r.slotId} | ${r.type} | ${r.level} | ${r.mentionsFigure ? 'Có' : 'Không'} | ${r.figureKind} | ${r.figureDetail} | ${r.optionsCount} | ${issuesText} | ${r.regenerationCount} |\n`;
+      const solverText = r.questionObj.aiSolvedAnswer
+        ? r.questionObj.isSolverMatch !== false
+          ? `Khớp (${r.questionObj.aiSolvedAnswer})`
+          : `Lệch: AI giải ${r.questionObj.aiSolvedAnswer} vs Đề ${r.questionObj.correctAnswer}`
+        : '—';
+
+      text += `| Câu ${r.index} | ${r.slotId} | ${r.type} | ${r.level} | ${r.mentionsFigure ? 'Có' : 'Không'} | ${r.figureKind} | ${r.figureDetail} | ${r.optionsCount} | ${solverText} | ${issuesText} | ${r.regenerationCount} |\n`;
     });
 
     if (allIssues.length > 0) {
@@ -430,6 +435,7 @@ export const DebugReportTable: React.FC<DebugReportTableProps> = ({ isOpen, onCl
                   <th className="py-2.5 px-3">Figure Gemini</th>
                   <th className="py-2.5 px-3">Trạng thái vẽ</th>
                   <th className="py-2.5 px-3 text-center">Số phương án</th>
+                  <th className="py-2.5 px-3">Tự giải độc lập (T8)</th>
                   <th className="py-2.5 px-3">Lỗi validate</th>
                   <th className="py-2.5 px-3 text-center">Sinh lại</th>
                   <th className="py-2.5 px-3 text-center w-28">Hành động</th>
@@ -438,7 +444,7 @@ export const DebugReportTable: React.FC<DebugReportTableProps> = ({ isOpen, onCl
               <tbody className="divide-y divide-slate-700/60 font-sans">
                 {filteredRows.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="py-6 text-center text-slate-400 text-xs italic">
+                    <td colSpan={12} className="py-6 text-center text-slate-400 text-xs italic">
                       Không tìm thấy câu hỏi nào phù hợp với bộ lọc hiện tại.
                     </td>
                   </tr>
@@ -530,7 +536,32 @@ export const DebugReportTable: React.FC<DebugReportTableProps> = ({ isOpen, onCl
                           {row.optionsCount}
                         </td>
 
-                        {/* 9. Lỗi validate (tiêu chí nào, mức ERROR hay WARN) */}
+                        {/* 9. Tự giải độc lập (T8) */}
+                        <td className="py-2.5 px-3 text-[11px] max-w-[170px]">
+                          {row.questionObj.aiSolvedAnswer ? (
+                            row.questionObj.isSolverMatch !== false ? (
+                              <span
+                                className="inline-flex items-center gap-1 text-emerald-400 font-mono text-[10px]"
+                                title={`AI giải ra: ${row.questionObj.aiSolvedAnswer}`}
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                                <span className="truncate">Khớp: {row.questionObj.aiSolvedAnswer}</span>
+                              </span>
+                            ) : (
+                              <span
+                                className="inline-flex items-center gap-1 text-rose-400 font-mono text-[10px]"
+                                title={`AI giải: ${row.questionObj.aiSolvedAnswer} vs Đề: ${row.questionObj.correctAnswer}`}
+                              >
+                                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                                <span className="truncate">Lệch: {row.questionObj.aiSolvedAnswer}</span>
+                              </span>
+                            )
+                          ) : (
+                            <span className="text-slate-500">—</span>
+                          )}
+                        </td>
+
+                        {/* 10. Lỗi validate (tiêu chí nào, mức ERROR hay WARN) */}
                         <td className="py-2.5 px-3 max-w-[220px]">
                           {row.issues.length === 0 ? (
                             <span className="inline-flex items-center gap-1 text-emerald-400 text-[10px] font-bold">

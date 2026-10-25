@@ -26,8 +26,9 @@ import {
   parseMathTokens,
   resolveTargetVersions,
 } from './utils';
-import { QUESTION_TYPE_LABELS, LEVEL_LABELS } from '../../config';
-import { renderFigureToSvg } from '../figureRenderer';
+import { QUESTION_TYPE_LABELS, LEVEL_LABELS, formatSchoolNameForHeader, getDefaultAcademicYear } from '../../config';
+import { figureToSvg } from '../figureRenderer';
+import { getQuestionErrorNote } from '../validate';
 
 const FONT_NAME = 'Times New Roman';
 const BASE_FONT_SIZE = 26; // 13pt trong docx (đơn vị half-points: 13 * 2 = 26)
@@ -209,7 +210,7 @@ async function createQuestionImageParagraphs(
   }
 
   // 2. Không có imageData -> Xử lý figure (SVG) hoặc svgDiagram: chuyển thành PNG qua Canvas 2x
-  const effectiveSvg = q.figure ? renderFigureToSvg(q.figure) : (q.svgDiagram?.trim() || '');
+  const effectiveSvg = q.figure ? figureToSvg(q.figure) : (q.svgDiagram?.trim() || '');
   if (effectiveSvg && effectiveSvg.length > 0) {
     try {
       const pngRes = await convertSvgToPngBuffer(effectiveSvg, 80);
@@ -348,13 +349,13 @@ async function createRunsFromText(
  */
 function createHeaderTable(config: ExamConfig, versionCode: string): Table {
   const departmentText = (config.departmentName?.trim() || 'SỞ GIÁO DỤC VÀ ĐÀO TẠO').toUpperCase();
-  const schoolText = (config.schoolName?.trim() || 'TRƯỜNG THPT / THCS / TIỂU HỌC').toUpperCase();
+  const schoolText = formatSchoolNameForHeader(config.schoolName);
   const examTitleText = (config.title?.trim() || 'ĐỀ KIỂM TRA ĐỊNH KỲ').toUpperCase();
   const subjectText = `MÔN: ${(config.customSubject?.trim() || config.subject || 'MÔN HỌC').toUpperCase()}${
     config.grade ? ` – KHỐI ${config.grade}` : ''
   }`;
   const durationText = `Thời gian làm bài: ${config.durationMinutes || 45} phút (không kể thời gian phát đề)`;
-  const yearText = `Năm học: ${config.academicYear || '2024 - 2025'}`;
+  const yearText = `Năm học: ${config.academicYear || getDefaultAcademicYear()}`;
 
   return new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
@@ -606,6 +607,19 @@ export async function exportExamToWord(
           const globalIdx = v.questions.findIndex((item) => item.id === q.id) + 1;
           const scoreText = q.score ? ` (${q.score.toFixed(2)} điểm)` : '';
 
+          const draftNote = options.isDraft ? getQuestionErrorNote(q) : null;
+          const draftRuns = draftNote
+            ? [
+                new TextRun({
+                  text: ` [CẦN KIỂM TRA: ${draftNote}]`,
+                  font: FONT_NAME,
+                  size: BASE_FONT_SIZE,
+                  bold: true,
+                  color: 'E11D48',
+                }),
+              ]
+            : [];
+
           sectionsChildren.push(
             new Paragraph({
               spacing: { before: 120, after: 60 },
@@ -620,6 +634,7 @@ export async function exportExamToWord(
                   formulaMode: options.formulaMode,
                   warnings,
                 })),
+                ...draftRuns,
               ],
             })
           );
@@ -704,6 +719,19 @@ export async function exportExamToWord(
           const globalIdx = v.questions.findIndex((item) => item.id === q.id) + 1;
           const scoreText = q.score ? ` (${q.score.toFixed(2)} điểm)` : '';
 
+          const draftNote = options.isDraft ? getQuestionErrorNote(q) : null;
+          const draftRuns = draftNote
+            ? [
+                new TextRun({
+                  text: ` [CẦN KIỂM TRA: ${draftNote}]`,
+                  font: FONT_NAME,
+                  size: BASE_FONT_SIZE,
+                  bold: true,
+                  color: 'E11D48',
+                }),
+              ]
+            : [];
+
           sectionsChildren.push(
             new Paragraph({
               spacing: { before: 140, after: 60 },
@@ -718,6 +746,7 @@ export async function exportExamToWord(
                   formulaMode: options.formulaMode,
                   warnings,
                 })),
+                ...draftRuns,
               ],
             })
           );

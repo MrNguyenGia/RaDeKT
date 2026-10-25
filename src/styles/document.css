@@ -1,0 +1,443 @@
+/**
+ * ĐỊNH DẠNG TÀI LIỆU CHUẨN A4 BỘ GIÁO DỤC VÀ ĐÀO TẠO
+ * Áp dụng thống nhất cho màn hình, In ấn (Print) và Sao chép (Copy)
+ * - Khổ giấy A4: 210mm x 297mm
+ * - Lề chuẩn: Trái 25mm, Phải 15mm, Trên 20mm, Dưới 20mm
+ * - Phông chữ: Times New Roman 13pt (dự phòng: Tinos, Liberation Serif, serif)
+ * - Giãn dòng: 1.3
+ * - Màu chữ: Đen thuần (#000000)
+ * - Căn lề: Căn đều hai bên (justify)
+ */
+
+:root {
+  --doc-font-family: 'Times New Roman', Tinos, 'Liberation Serif', serif;
+  --doc-font-size: 13pt;
+  --doc-line-height: 1.3;
+  --doc-text-color: #000000;
+  --doc-page-width: 210mm;
+  --doc-page-min-height: 297mm;
+  --doc-margin-top: 20mm;
+  --doc-margin-bottom: 20mm;
+  --doc-margin-left: 25mm;
+  --doc-margin-right: 15mm;
+  --doc-zoom: 1;
+}
+
+/* Khung nền xám xanh rất nhạt chứa tờ giấy trên màn hình */
+.doc-viewport-bg {
+  background-color: #f1f5f9;
+  min-height: 100%;
+  width: 100%;
+  padding: 1.5rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* Container hỗ trợ thu phóng 75% - 150% */
+.doc-zoom-container {
+  transform-origin: top center;
+  transition: transform 0.15s ease-out;
+}
+
+/* Tờ giấy A4 */
+.doc-page {
+  width: var(--doc-page-width);
+  max-width: var(--doc-page-width);
+  min-height: var(--doc-page-min-height);
+  padding: var(--doc-margin-top) var(--doc-margin-right) var(--doc-margin-bottom) var(--doc-margin-left);
+  background-color: #ffffff;
+  color: var(--doc-text-color);
+  font-family: var(--doc-font-family);
+  font-size: var(--doc-font-size);
+  line-height: var(--doc-line-height);
+  text-align: justify;
+  box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.08), 0 2px 6px -1px rgba(15, 23, 42, 0.04);
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  box-sizing: border-box;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+/* Đầu đề 2 cột */
+.doc-header-table {
+  width: 100%;
+  border-collapse: collapse;
+  border: none;
+  margin-bottom: 8pt;
+}
+
+.doc-header-col-left {
+  width: 44%;
+  vertical-align: top;
+  text-align: center;
+  padding: 0 4pt 0 0;
+}
+
+.doc-header-col-right {
+  width: 56%;
+  vertical-align: top;
+  text-align: center;
+  padding: 0 0 0 4pt;
+  position: relative;
+}
+
+.doc-dept-title {
+  font-size: 12pt;
+  text-transform: uppercase;
+  color: #000000;
+  line-height: 1.25;
+}
+
+.doc-school-title {
+  font-size: 13pt;
+  font-weight: bold;
+  text-transform: uppercase;
+  margin-top: 2pt;
+  line-height: 1.25;
+}
+
+.doc-divider-short {
+  width: 60pt;
+  height: 0.75pt;
+  background-color: #000000;
+  margin: 4pt auto 0 auto;
+}
+
+.doc-exam-title {
+  font-size: 14pt;
+  font-weight: bold;
+  text-transform: uppercase;
+  line-height: 1.25;
+}
+
+.doc-exam-subject {
+  font-size: 13pt;
+  font-weight: bold;
+  margin-top: 2pt;
+  line-height: 1.25;
+}
+
+.doc-exam-duration {
+  font-size: 12pt;
+  font-style: italic;
+  margin-top: 2pt;
+  line-height: 1.25;
+}
+
+/* Khung viền chữ nhật Mã đề ở góc phải */
+.doc-version-box {
+  display: inline-block;
+  border: 0.75pt solid #000000;
+  padding: 1.5pt 8pt;
+  font-size: 11pt;
+  font-weight: bold;
+  margin-top: 4pt;
+  letter-spacing: 0.5px;
+}
+
+/* Khung thông tin thí sinh viền mảnh 0.75pt */
+.doc-student-box {
+  width: 100%;
+  border: 0.75pt solid #000000;
+  border-collapse: collapse;
+  margin: 6pt 0 10pt 0;
+}
+
+.doc-student-info-cell {
+  border: 0.75pt solid #000000;
+  padding: 4pt 8pt;
+  vertical-align: middle;
+  font-size: 12pt;
+  width: 70%;
+}
+
+.doc-student-score-cell {
+  border: 0.75pt solid #000000;
+  padding: 3pt 6pt;
+  vertical-align: middle;
+  text-align: center;
+  font-size: 11pt;
+  font-weight: bold;
+  width: 30%;
+  background-color: #fafafa;
+}
+
+/* Tiêu đề phần (PHẦN I, II...) */
+.doc-part-title {
+  font-size: 13pt;
+  font-weight: bold;
+  text-transform: uppercase;
+  margin: 10pt 0 2pt 0;
+  text-align: left;
+  break-after: avoid;
+  page-break-after: avoid;
+}
+
+/* Dòng hướng dẫn dưới tiêu đề phần */
+.doc-part-instruction {
+  font-size: 12pt;
+  font-style: italic;
+  margin-bottom: 6pt;
+  text-align: justify;
+  line-height: 1.3;
+}
+
+/* Câu hỏi */
+.doc-question-item {
+  margin-bottom: 6pt;
+  break-inside: avoid;
+  page-break-inside: avoid;
+  text-align: justify;
+  line-height: 1.3;
+}
+
+.doc-question-label {
+  font-weight: bold;
+  margin-right: 3pt;
+}
+
+.doc-question-score {
+  font-weight: normal;
+  font-style: italic;
+  font-size: 12pt;
+  margin-left: 2pt;
+}
+
+/* Phương án trắc nghiệm: thụt 8mm, căn grid thẳng hàng */
+.doc-options-grid {
+  margin-left: 8mm;
+  margin-top: 3pt;
+  margin-bottom: 4pt;
+  display: grid;
+  gap: 2pt 12pt;
+  align-items: baseline;
+}
+
+.doc-options-4col {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.doc-options-2col {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.doc-options-1col {
+  grid-template-columns: 1fr;
+}
+
+.doc-option-item {
+  display: flex;
+  align-items: baseline;
+  gap: 3pt;
+  line-height: 1.3;
+}
+
+.doc-option-label {
+  font-weight: bold;
+  flex-shrink: 0;
+}
+
+/* Mệnh đề Đúng / Sai chùm (thụt 8mm, không in cột Đúng/Sai) */
+.doc-tf-list {
+  margin-left: 8mm;
+  margin-top: 3pt;
+  margin-bottom: 4pt;
+  display: flex;
+  flex-direction: column;
+  gap: 2pt;
+}
+
+.doc-tf-item {
+  display: flex;
+  align-items: baseline;
+  gap: 4pt;
+  line-height: 1.3;
+}
+
+.doc-tf-label {
+  font-weight: bold;
+  flex-shrink: 0;
+}
+
+/* Ghép nối (bảng 2 cột) */
+.doc-matching-table {
+  width: 90%;
+  margin: 4pt 0 4pt 8mm;
+  border-collapse: collapse;
+}
+
+.doc-matching-table td,
+.doc-matching-table th {
+  padding: 2.5pt 6pt;
+  vertical-align: top;
+}
+
+/* Điền khuyết */
+.doc-blank-placeholder {
+  display: inline-block;
+  width: 50pt;
+  border-bottom: 1pt dotted #000000;
+  margin: 0 2pt;
+  text-align: center;
+}
+
+/* Ô làm bài trả lời ngắn */
+.doc-short-answer-box {
+  margin-left: 8mm;
+  margin-top: 3pt;
+  font-style: italic;
+  font-size: 12pt;
+}
+
+/* Dòng kẻ tự luận nếu bật tùy chọn */
+.doc-essay-lines {
+  margin-left: 8mm;
+  margin-top: 4pt;
+  display: flex;
+  flex-direction: column;
+  gap: 16pt;
+}
+
+.doc-essay-line-item {
+  border-bottom: 0.5pt dotted #999999;
+  height: 1pt;
+  width: 100%;
+}
+
+/* Hình vẽ và đồ thị */
+.doc-figure-wrapper {
+  margin: 6pt auto;
+  text-align: center;
+  break-inside: avoid;
+  page-break-inside: avoid;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.doc-figure-wrapper.figure-graph,
+.doc-figure-wrapper.figure-geometry {
+  max-width: 70%;
+}
+
+.doc-figure-wrapper.figure-table {
+  max-width: 100%;
+  width: 100%;
+}
+
+.doc-figure-caption {
+  font-size: 11pt;
+  font-style: italic;
+  margin-top: 3pt;
+  text-align: center;
+}
+
+/* Dòng kết thúc đề */
+.doc-end-notice {
+  text-align: center;
+  margin-top: 14pt;
+  padding-top: 6pt;
+  border-top: 0.75pt solid #000000;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.doc-end-title {
+  font-weight: bold;
+  font-size: 13pt;
+  letter-spacing: 2px;
+}
+
+.doc-end-disclaimer {
+  font-size: 11pt;
+  font-style: italic;
+  margin-top: 2pt;
+}
+
+/* Chân trang (Mã đề 101 – Trang x/y) */
+.doc-footer {
+  margin-top: 10pt;
+  padding-top: 4pt;
+  font-size: 11pt;
+  text-align: center;
+  color: #333333;
+  width: 100%;
+  border-top: 0.5pt solid #cccccc;
+}
+
+/* Đảm bảo KaTeX cùng cỡ chữ chuẩn với văn bản 13pt */
+.doc-page .katex {
+  font-size: 1em !important;
+  text-rendering: geometricPrecision;
+}
+
+.doc-page .katex-html {
+  display: inline-block;
+}
+
+/* Bảng in và sao chép chuẩn viền 0.75pt */
+.doc-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 6pt 0;
+  font-size: 12pt;
+}
+
+.doc-table th,
+.doc-table td {
+  border: 0.75pt solid #000000;
+  padding: 4pt 6pt;
+  vertical-align: top;
+}
+
+.doc-table th {
+  background-color: #f5f5f5;
+  font-weight: bold;
+  text-align: center;
+}
+
+/* Media print tối ưu cho in ấn A4 */
+@media print {
+  body {
+    background: #ffffff !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .doc-viewport-bg {
+    background: #ffffff !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: block !important;
+  }
+
+  .doc-zoom-container {
+    transform: none !important;
+  }
+
+  .doc-page {
+    box-shadow: none !important;
+    border: none !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important; /* Lề do @page quản lý */
+    min-height: auto !important;
+    break-after: page;
+    page-break-after: always;
+  }
+
+  .doc-page:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+
+  .no-print,
+  .print-hidden {
+    display: none !important;
+  }
+}

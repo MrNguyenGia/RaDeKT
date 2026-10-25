@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   X,
   Printer,
@@ -15,6 +15,7 @@ import {
   ExternalLink,
   Settings2,
   AlertTriangle,
+  AlertCircle,
 } from 'lucide-react';
 import { Exam, ExamConfig } from '../types';
 import {
@@ -27,6 +28,7 @@ import { exportExamToWord, triggerFileDownload } from '../lib/export/word';
 import { copyExamToClipboard } from '../lib/export/copy';
 import { executePrint, executeExportPdf } from '../lib/export/print';
 import { generateExportFileName } from '../lib/export/utils';
+import { getFaultyQuestions } from '../lib/validate';
 
 interface ExportModalProps {
   isOpen: boolean;
@@ -55,6 +57,13 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [localToast, setLocalToast] = useState<string | null>(null);
   const [pdfFileName, setPdfFileName] = useState<string>('');
+  const [showConfirmBlockModal, setShowConfirmBlockModal] = useState<boolean>(false);
+  const [isTeacherConfirmedClean, setIsTeacherConfirmedClean] = useState<boolean>(false);
+
+  const faultyQuestions = useMemo(() => {
+    if (!exam) return [];
+    return getFaultyQuestions(exam.questions, config, exam);
+  }, [exam, config]);
 
   useEffect(() => {
     if (isOpen) {
@@ -63,6 +72,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         ...prev,
         selectedVersionCode: activeVersionCode || 'ALL',
       }));
+      setShowConfirmBlockModal(false);
+      setIsTeacherConfirmedClean(false);
     }
   }, [isOpen, initialAction, activeVersionCode]);
 
@@ -94,24 +105,19 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     options.includeMatrix ||
     options.includeSpec;
 
-  const handleExecute = async () => {
-    if (!isAnyContentSelected) {
-      showLocalToast('Vui lòng chọn ít nhất 1 nội dung để xuất bản.');
-      return;
-    }
-
+  const performActualExport = async (effectiveOptions: ExportOptions) => {
     setIsProcessing(true);
 
     try {
       if (currentAction === 'PRINT') {
-        executePrint(exam, config, options);
+        executePrint(exam, config, effectiveOptions);
         showLocalToast('Đang mở hộp thoại in của hệ thống...');
         setTimeout(() => {
           setIsProcessing(false);
           onClose();
         }, 500);
       } else if (currentAction === 'PDF') {
-        const fileName = executeExportPdf(exam, config, options);
+        const fileName = executeExportPdf(exam, config, effectiveOptions);
         setPdfFileName(fileName);
         showLocalToast(`Đã chuẩn bị file PDF: "${fileName}". Chọn "Lưu thành PDF" trên hộp thoại.`);
         setTimeout(() => {
@@ -119,7 +125,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           onClose();
         }, 800);
       } else if (currentAction === 'WORD') {
-        const result = await exportExamToWord(exam, config, options);
+        const result = await exportExamToWord(exam, config, effectiveOptions);
         triggerFileDownload(result.blob, result.fileName);
         if (result.warnings.length > 0) {
           showLocalToast(`Đã xuất file Word: ${result.fileName} (${result.warnings.length} công thức dùng ảnh dự phòng).`);
@@ -129,7 +135,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         setIsProcessing(false);
         onClose();
       } else if (currentAction === 'COPY') {
-        const ok = await copyExamToClipboard(exam, config, options);
+        const ok = await copyExamToClipboard(exam, config, effectiveOptions);
         if (ok) {
           showLocalToast('Đã sao chép nội dung vào bộ nhớ tạm (dán được vào Word giữ nguyên định dạng)!');
         } else {
@@ -143,6 +149,21 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       showLocalToast(`Lỗi: ${err?.message || 'Không thể xuất bản'}`);
       setIsProcessing(false);
     }
+  };
+
+  const handleExecute = async () => {
+    if (!isAnyContentSelected) {
+      showLocalToast('Vui lòng chọn ít nhất 1 nội dung để xuất bản.');
+      return;
+    }
+
+    // Nếu đề còn câu lỗi ERROR hoặc needsReview -> hiển thị hộp thoại xác nhận 3 lựa chọn
+    if (faultyQuestions.length > 0) {
+      setShowConfirmBlockModal(true);
+      return;
+    }
+
+    performActualExport({ ...options, isDraft: false });
   };
 
   const previewFileName = generateExportFileName(
@@ -548,6 +569,96 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Hộp xác nhận chặn xuất khi còn lỗi (ERROR hoặc needsReview) */}
+        {showConfirmBlockModal && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
+            <div className="bg-white rounded-2xl border-2 border-rose-400 shadow-2xl max-w-lg w-full p-5 space-y-4 animate-in zoom-in-95">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base">
+                    Đề thi còn câu hỏi lỗi hoặc chưa hoàn thiện
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Phát hiện {faultyQuestions.length} câu hỏi có lỗi ERROR hoặc cần kiểm tra trước khi xuất bản.
+                  </p>
+                </div>
+              </div>
+
+              {/* Danh sách câu lỗi và lý do */}
+              <div className="max-h-52 overflow-y-auto space-y-2 border border-rose-200 bg-rose-50/60 rounded-xl p-3 text-xs">
+                {faultyQuestions.map((item) => (
+                  <div key={item.question.id} className="flex items-start gap-2 text-rose-950">
+                    <span className="font-bold px-1.5 py-0.5 bg-rose-200 text-rose-900 rounded text-[11px] shrink-0">
+                      Câu {item.index}
+                    </span>
+                    <span className="text-rose-800 leading-tight">
+                      {item.reasons.join(' • ')}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Checkbox xác nhận của giáo viên */}
+              <label className="flex items-center gap-2 p-2.5 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer text-xs text-slate-700 hover:bg-slate-100 select-none transition-colors">
+                <input
+                  type="checkbox"
+                  checked={isTeacherConfirmedClean}
+                  onChange={(e) => setIsTeacherConfirmedClean(e.target.checked)}
+                  className="w-4 h-4 rounded text-blue-600 border-slate-300 focus:ring-blue-500"
+                />
+                <span className="font-bold text-slate-900">Tôi đã kiểm tra</span>
+                <span className="text-slate-500 text-[11px]">(Cho phép xuất bản sạch không kèm chú thích)</span>
+              </label>
+
+              {/* 3 Lựa chọn hành động */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowConfirmBlockModal(false);
+                    onClose();
+                  }}
+                  className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs transition-colors"
+                >
+                  Quay lại sửa
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowConfirmBlockModal(false);
+                    performActualExport({ ...options, isDraft: true });
+                  }}
+                  className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl text-xs transition-colors shadow-2xs cursor-pointer"
+                  title="Chèn chú thích đỏ [CẦN KIỂM TRA: lý do] ngay sau các câu lỗi"
+                >
+                  Xuất bản nháp
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!isTeacherConfirmedClean}
+                  onClick={() => {
+                    setShowConfirmBlockModal(false);
+                    performActualExport({ ...options, isDraft: false });
+                  }}
+                  className={`px-3.5 py-2 font-bold rounded-xl text-xs transition-colors shadow-2xs ${
+                    isTeacherConfirmedClean
+                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer'
+                      : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                  }`}
+                  title={!isTeacherConfirmedClean ? 'Vui lòng tích chọn "Tôi đã kiểm tra" để kích hoạt' : 'Xuất bản sạch không chèn chú thích'}
+                >
+                  Xuất bản sạch
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

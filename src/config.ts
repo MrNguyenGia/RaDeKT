@@ -230,6 +230,49 @@ export const QUESTION_TYPES_ORDER: QuestionType[] = [
 export const ROUNDING_STEPS = [0.05, 0.1, 0.25];
 
 /**
+ * Tính năm học mặc định dựa trên ngày hiện tại:
+ * Từ tháng 8 trở đi là năm nay - năm sau, trước tháng 8 là năm trước - năm nay
+ */
+export function getDefaultAcademicYear(date: Date = new Date()): string {
+  const month = date.getMonth() + 1; // 1-12
+  const year = date.getFullYear();
+  return month >= 8 ? `${year} - ${year + 1}` : `${year - 1} - ${year}`;
+}
+
+/**
+ * Định dạng điểm số theo chuẩn chính tả văn bản Việt Nam:
+ * - Dấu thập phân là dấu phẩy (0,25; 1,5), không dùng dấu chấm.
+ * - Bỏ số 0 thừa (1,0 thành 1; 0,50 thành 0,5; 0,25 thành 0,25; 10 thành 10).
+ */
+export function formatScore(n: number | string | undefined | null): string {
+  if (n === undefined || n === null || n === '') return '0';
+  const num = typeof n === 'number' ? n : parseFloat(String(n).replace(',', '.'));
+  if (isNaN(num)) return String(n);
+  const rounded = Math.round(num * 100) / 100;
+  return rounded.toString().replace('.', ',');
+}
+
+/**
+ * Định dạng tên trường ở tiêu đề đầu đề:
+ * Nếu để trống thì in dòng chấm "TRƯỜNG: ........................................" để giáo viên điền tay
+ */
+export function formatSchoolNameForHeader(schoolName?: string): string {
+  const trimmed = schoolName?.trim();
+  if (trimmed) return trimmed.toUpperCase();
+  return 'TRƯỜNG: ........................................';
+}
+
+/**
+ * Định dạng cơ quan quản lý (Sở / Phòng) ở tiêu đề đầu đề:
+ * Nếu để trống thì in dòng chấm để giáo viên tự điền
+ */
+export function formatDepartmentForHeader(dept?: string): string {
+  const trimmed = dept?.trim();
+  if (trimmed) return trimmed.toUpperCase();
+  return 'SỞ GIÁO DỤC VÀ ĐÀO TẠO ........................................';
+}
+
+/**
  * Cấu hình khởi tạo mặc định cho đề kiểm tra
  */
 export const DEFAULT_EXAM_CONFIG: ExamConfig = {
@@ -253,7 +296,7 @@ export const DEFAULT_EXAM_CONFIG: ExamConfig = {
   durationMinutes: 45,
   schoolName: '',
   departmentName: '',
-  academicYear: '2024 - 2025',
+  academicYear: getDefaultAcademicYear(),
   teacherName: '',
   scale: 10,
   roundingStep: 0.25,

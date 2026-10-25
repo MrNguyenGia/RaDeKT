@@ -1,4 +1,4 @@
-import { BlueprintSlot, Exam, ExamConfig, Question } from '../types';
+import { BlueprintSlot, Exam, ExamConfig, Question, QuestionType } from '../types';
 import { QualityIssue, runCodeQualityCheck } from '../lib/validate';
 import { QUALITY_CRITERIA_LIST, QualityCriterionInfo } from '../config';
 import {
@@ -28,24 +28,148 @@ export interface QualityCheckReport {
   exam: Exam;
 }
 
+import { compile } from 'mathjs';
+
 /**
- * Chuẩn hóa chuỗi đáp án ngắn để so khớp
+ * Trích xuất và tính giá trị số học từ chuỗi đáp án (hỗ trợ phân số \frac{a}{b}, căn \sqrt{a}, số thập phân, số âm)
  */
-function normalizeAnswerString(str?: string): string {
-  if (!str) return '';
-  return str
-    .toLowerCase()
-    .trim()
-    .replace(/[,\s]+/g, ' ')
-    .replace(/^[\(\[]|[\)\]]$/g, '');
+export function parseMathNumber(str?: string): number | null {
+  if (!str) return null;
+  let s = String(str).trim();
+
+  // Bỏ các tiền tố như "m =", "x =", "y =", "k =", "S =", "đáp số:", "kết quả:"
+  s = s.replace(/^(?:đáp số|kết quả|[a-z]\s*=)\s*:?\s*/i, '');
+  // Bỏ ký hiệu LaTeX $, \(, \)
+  s = s.replace(/[\$\(\)]/g, ' ');
+  // Đổi dấu trừ unicode thành dấu trừ ASCII
+  s = s.replace(/[−–]/g, '-');
+  // Đổi dấu phẩy giữa các chữ số thành dấu chấm thập phân (ví dụ "2,5" -> "2.5")
+  s = s.replace(/(\d+),(\d+)/g, '$1.$2');
+
+  // Chuẩn hóa phân số LaTeX \frac{a}{b} hoặc \dfrac{a}{b}
+  s = s.replace(/\\(?:d?frac)\s*\{([^{}]+)\}\s*\{([^{}]+)\}/g, '(($1)/($2))');
+  // Chuẩn hóa căn bậc hai \sqrt{a} hoặc \sqrt a
+  s = s.replace(/\\sqrt\s*\{([^{}]+)\}/g, 'sqrt($1)');
+  s = s.replace(/\\sqrt\s*(\d+)/g, 'sqrt($1)');
+  // Chuẩn hóa \pi
+  s = s.replace(/\\pi/g, 'pi');
+
+  s = s.trim();
+
+  // Thử parse số trực tiếp
+  const directNum = Number(s);
+  if (!isNaN(directNum) && isFinite(directNum)) {
+    return directNum;
+  }
+
+  // Thử tính toán biểu thức bằng mathjs (compile/evaluate)
+  try {
+    const fn = compile(s);
+    const val = fn.evaluate();
+    if (typeof val === 'number' && isFinite(val)) {
+      return val;
+    }
+  } catch {
+    // Không tính toán trực tiếp được biểu thức phức tạp
+  }
+
+  // Nếu chứa từ ngữ kèm số (ví dụ: "3 giá trị nguyên", "có 4 nghiệm", "m = 5")
+  const extractedNumberMatch = s.match(/[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?/);
+  if (extractedNumberMatch) {
+    const cand = Number(extractedNumberMatch[0]);
+    if (!isNaN(cand) && isFinite(cand)) {
+      return cand;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * So sánh bằng CODE giữa đáp án đề thi và kết quả AI tự giải độc lập (Tiêu chí 8)
+ * Áp dụng cho CẢ trắc nghiệm (MCQ4, MCQ_MULTI, TRUE_FALSE) và trả lời ngắn (SHORT_ANSWER, FILL_BLANK, tính số giá trị nguyên của tham số)
+ * Dung sai so sánh số: |num1 - num2| < 1e-4
+ */
+export function compareAnswersWithCode(
+  origAnswer: string,
+  aiAnswer: string,
+  type: QuestionType
+): { isMatch: boolean; reason?: string } {
+  if (!origAnswer || !aiAnswer) {
+    return { isMatch: false, reason: 'Đáp án bị rỗng' };
+  }
+
+  // 1. Trắc nghiệm 4 lựa chọn (MCQ4)
+  if (type === 'MCQ4') {
+    const origLetter = origAnswer.match(/([A-D])/i)?.[1]?.toUpperCase();
+    const aiLetter = aiAnswer.match(/([A-D])/i)?.[1]?.toUpperCase();
+    if (origLetter && aiLetter) {
+      const match = origLetter === aiLetter;
+      return {
+        isMatch: match,
+        reason: match
+          ? undefined
+          : `Đề bài chọn phương án [${origLetter}], nhưng AI giải ra phương án [${aiLetter}]`,
+      };
+    }
+  }
+
+  // 2. Đúng / Sai (TRUE_FALSE)
+  if (type === 'TRUE_FALSE') {
+    const normAi = aiAnswer.toLowerCase();
+    const normOrig = origAnswer.toLowerCase();
+    const aiTrueCount = (normAi.match(/đúng/g) || []).length;
+    const origTrueCount = (normOrig.match(/đúng/g) || []).length;
+    const aiFalseCount = (normAi.match(/sai/g) || []).length;
+    const origFalseCount = (normOrig.match(/sai/g) || []).length;
+
+    if (aiTrueCount > 0 && origTrueCount > 0) {
+      const match = aiTrueCount === origTrueCount && aiFalseCount === origFalseCount;
+      return {
+        isMatch: match,
+        reason: match
+          ? undefined
+          : `Số lượng mệnh đề Đúng/Sai AI giải ra (${aiTrueCount}Đ/${aiFalseCount}S) lệch với đề (${origTrueCount}Đ/${origFalseCount}S)`,
+      };
+    }
+  }
+
+  // 3. Trả lời ngắn / Điền khuyết / Tính số giá trị nguyên (SHORT_ANSWER, FILL_BLANK)
+  const numOrig = parseMathNumber(origAnswer);
+  const numAi = parseMathNumber(aiAnswer);
+
+  if (numOrig !== null && numAi !== null) {
+    const diff = Math.abs(numOrig - numAi);
+    const isNumMatch = diff < 1e-4;
+    return {
+      isMatch: isNumMatch,
+      reason: isNumMatch
+        ? undefined
+        : `AI giải ra số ${numAi}, lệch so với đáp án đề là ${numOrig} (chênh lệch: ${diff.toFixed(5)})`,
+    };
+  }
+
+  // So sánh dạng chuỗi văn bản nếu không parse được thành số
+  const cleanOrig = origAnswer.toLowerCase().trim().replace(/[,\s]+/g, ' ').replace(/^[\(\[]|[\)\]]$/g, '');
+  const cleanAi = aiAnswer.toLowerCase().trim().replace(/[,\s]+/g, ' ').replace(/^[\(\[]|[\)\]]$/g, '');
+
+  if (cleanOrig === cleanAi || cleanOrig.includes(cleanAi) || cleanAi.includes(cleanOrig)) {
+    return { isMatch: true };
+  }
+
+  return {
+    isMatch: false,
+    reason: `AI giải ra "${aiAnswer}", khác với đáp án đề "${origAnswer}"`,
+  };
 }
 
 /**
  * LƯỢT AI A – GIẢI ĐỘC LẬP (Tiêu chí 8)
  * Gửi các câu trắc nghiệm, điền khuyết, trả lời ngắn, đúng/sai KHÔNG kèm đáp án;
  * yêu cầu Gemini giải độc lập và trả về kết quả để CODE so sánh đối chiếu.
+ * Áp dụng cho CẢ trắc nghiệm và trả lời ngắn (kể cả câu tính số giá trị nguyên của tham số).
  */
-async function runIndependentSolverPass(
+export async function runIndependentSolverPass(
   questions: Question[],
   abortSignal?: AbortSignal
 ): Promise<QualityIssue[]> {
@@ -63,7 +187,7 @@ Nhiệm vụ: Giải độc lập từng câu hỏi dưới đây một cách tu
 Quy tắc:
 - Với trắc nghiệm 4 lựa chọn (MCQ4): Chỉ trả về chữ cái A, B, C hoặc D.
 - Với Đúng/Sai (TRUE_FALSE): Ghi kết quả từng ý, ví dụ "a: Đúng, b: Sai, c: Đúng, d: Sai".
-- Với Điền khuyết / Trả lời ngắn: Ghi đáp số số học hoặc từ ngữ ngắn gọn chính xác nhất.
+- Với Điền khuyết / Trả lời ngắn (bao gồm câu tính số lượng giá trị nguyên, nghiệm, tọa độ): Ghi đáp số số học chuẩn xác nhất (dưới dạng số nguyên, phân số a/b, căn thức hoặc số thập phân) hoặc từ ngữ ngắn gọn.
 - Trả về JSON:
 {
   "solutions": [
@@ -111,52 +235,24 @@ Quy tắc:
       }
     });
 
-    // So sánh đáp án AI giải với đáp án gốc của đề
+    // So sánh đáp án AI giải với đáp án gốc của đề bằng CODE
     targetQuestions.forEach((q, idx) => {
       const qNum = idx + 1;
       const solved = solutionMap.get(q.id);
       if (!solved || !solved.answer) return;
 
-      if (q.type === 'MCQ4') {
-        const aiLetter = solved.answer.match(/([A-D])/i)?.[1]?.toUpperCase();
-        const origLetter = q.correctAnswer.match(/([A-D])/i)?.[1]?.toUpperCase();
+      q.aiSolvedAnswer = solved.answer;
+      const comparison = compareAnswersWithCode(q.correctAnswer, solved.answer, q.type);
+      q.isSolverMatch = comparison.isMatch;
 
-        if (aiLetter && origLetter && aiLetter !== origLetter) {
-          issues.push({
-            questionId: q.id,
-            criterion: 8,
-            severity: 'ERROR',
-            message: `Nghi vấn sai đáp án Câu ${qNum}: Đề bài ghi nhận [${origLetter}], nhưng AI giải độc lập ra [${aiLetter}]. Lời giải AI: ${solved.explanation || 'Không có'}`,
-            suggestedFix: `Kiểm tra lại đáp án đúng giữa phương án ${origLetter} và ${aiLetter}.`,
-          });
-        }
-      } else if (q.type === 'TRUE_FALSE') {
-        const normAi = solved.answer.toLowerCase();
-        const normOrig = q.correctAnswer.toLowerCase();
-        // Kiểm tra số lượng ý đúng/sai có chênh lệch rõ ràng
-        const aiTrueCount = (normAi.match(/đúng/g) || []).length;
-        const origTrueCount = (normOrig.match(/đúng/g) || []).length;
-        if (aiTrueCount > 0 && origTrueCount > 0 && aiTrueCount !== origTrueCount) {
-          issues.push({
-            questionId: q.id,
-            criterion: 8,
-            severity: 'WARN',
-            message: `Câu Đúng/Sai ${qNum}: AI giải độc lập có sự khác biệt về số lượng mệnh đề Đúng/Sai so với đề bài.`,
-            suggestedFix: `Rà soát lại tính đúng sai của từng mệnh đề a, b, c, d.`,
-          });
-        }
-      } else if (q.type === 'SHORT_ANSWER' || q.type === 'FILL_BLANK') {
-        const normAi = normalizeAnswerString(solved.answer);
-        const normOrig = normalizeAnswerString(q.correctAnswer);
-        if (normAi && normOrig && !normOrig.includes(normAi) && !normAi.includes(normOrig)) {
-          issues.push({
-            questionId: q.id,
-            criterion: 8,
-            severity: 'WARN',
-            message: `Câu ${qNum} (${q.type}): Kết quả AI giải ("${solved.answer}") khác biệt với đáp án đề ("${q.correctAnswer}").`,
-            suggestedFix: `Kiểm tra lại phép tính và độ chính xác của đáp số.`,
-          });
-        }
+      if (!comparison.isMatch) {
+        issues.push({
+          questionId: q.id,
+          criterion: 8,
+          severity: 'ERROR',
+          message: `Nghi vấn sai đáp án Câu ${qNum} (${q.type}): ${comparison.reason || `Đề ghi [${q.correctAnswer}], AI giải ra [${solved.answer}]`}. Lời giải AI: ${solved.explanation || 'Không có'}`,
+          suggestedFix: `Giải trọn vẹn đúng đề đã cho, kết luận cuối cùng phải trùng correctAnswer hoặc sửa lại đáp án đúng.`,
+        });
       }
     });
   } catch (err: any) {
@@ -294,7 +390,7 @@ export async function runQualityCheck(
 
   // 2. Lượt AI A – Giải độc lập (tiêu chí 8)
   onProgressMsg?.('Đang thẩm định đáp án: AI giải độc lập (tiêu chí 8)...');
-  const passAIssues = await runIndependentSolverPass(currentQuestions, abortSignal);
+  let passAIssues = await runIndependentSolverPass(currentQuestions, abortSignal);
 
   // 3. Lượt AI B – Rà soát nội dung (tiêu chí 9–12)
   onProgressMsg?.('Đang rà soát nội dung chuyên sâu (tiêu chí 9–12)...');
@@ -378,11 +474,13 @@ export async function runQualityCheck(
     const repairResults = await Promise.all(repairPromises);
 
     // Cập nhật câu hỏi đã sửa vào đề
+    const repairedQIds: string[] = [];
     repairResults.forEach((res) => {
       if (res && res.repairedQ) {
         currentQuestions = currentQuestions.map((q) =>
           q.id === res.originalId ? res.repairedQ : q
         );
+        repairedQIds.push(res.originalId);
         repairedCount++;
       }
     });
@@ -393,10 +491,24 @@ export async function runQualityCheck(
       questions: currentQuestions,
     });
 
+    // Nếu có câu hỏi sửa liên quan đến Tiêu chí 8, tự giải độc lập lại câu đó
+    const repairedTargetQs = currentQuestions.filter((q) => repairedQIds.includes(q.id));
+    if (repairedTargetQs.length > 0) {
+      try {
+        const reSolverIssues = await runIndependentSolverPass(repairedTargetQs, abortSignal);
+        passAIssues = [
+          ...passAIssues.filter((i) => !repairedQIds.includes(i.questionId || '')),
+          ...reSolverIssues,
+        ];
+      } catch {
+        // Giữ nguyên passAIssues nếu gọi giải lại lỗi mạng
+      }
+    }
+
     // Cập nhật lại danh sách lỗi
     allCollectedIssues = [
       ...postRepairCodeIssues,
-      ...passAIssues.filter((i) => !faultyQuestionMap.has(i.questionId || '')),
+      ...passAIssues,
       ...passBIssues.filter((i) => !faultyQuestionMap.has(i.questionId || '')),
     ];
   }
@@ -407,12 +519,23 @@ export async function runQualityCheck(
     if (issue.severity === 'ERROR' && issue.questionId) {
       currentQuestions = currentQuestions.map((q) => {
         if (q.id === issue.questionId) {
+          const isMissingFigure = issue.criterion === 10 && (issue.message.includes('thiếu dữ liệu hình') || issue.message.includes('figure') || issue.message.includes('bảng'));
+          const isInvalidOptions = issue.criterion === 5 && (issue.message.includes('phương án') || issue.message.includes('MCQ4'));
+          const isSolverMismatch = issue.criterion === 8;
+          const noteText = isInvalidOptions
+            ? 'Câu này chưa có phương án hợp lệ'
+            : isMissingFigure
+            ? 'Câu này đang thiếu hình'
+            : isSolverMismatch
+            ? `AI giải ra đáp số khác: ${q.aiSolvedAnswer || 'khác đáp án'}`
+            : q.reviewNote
+            ? `${q.reviewNote} | ${issue.message}`
+            : `Lỗi chất lượng: ${issue.message}`;
+
           return {
             ...q,
             needsReview: true,
-            reviewNote: q.reviewNote
-              ? `${q.reviewNote} | ${issue.message}`
-              : `Lỗi chất lượng: ${issue.message}`,
+            reviewNote: noteText,
           };
         }
         return q;

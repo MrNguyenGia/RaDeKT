@@ -3,6 +3,13 @@ import { ListOrdered, CheckCircle, Info } from 'lucide-react';
 import { Exam, ExamConfig, Question } from '../../types';
 import { MathText } from '../MathText';
 import { FigureView } from '../FigureView';
+import {
+  formatSchoolNameForHeader,
+  formatScore,
+  formatDepartmentForHeader,
+  getDefaultAcademicYear,
+} from '../../config';
+import { DocPage } from '../common/DocPage';
 
 interface ScoringTabProps {
   exam: Exam;
@@ -14,56 +21,58 @@ interface ScoringTabProps {
 interface CriterionItem {
   criterion: string;
   content: string;
-  points: number | string;
+  points: string;
 }
 
 /**
  * Phân tích scoringGuide thành các dòng tiêu chí chuẩn (Ý / Tiêu chí | Nội dung yêu cầu | Điểm)
  */
-function parseScoringGuide(guide: string | undefined, totalScore: number, defaultExplanation: string): CriterionItem[] {
+function parseScoringGuide(
+  guide: string | undefined,
+  totalScore: number,
+  defaultExplanation: string
+): CriterionItem[] {
   if (!guide || guide.trim() === '') {
-    // Tự sinh tiêu chí mặc định nếu chưa có
     return [
       {
         criterion: 'Ý 1',
-        content: defaultExplanation ? defaultExplanation.slice(0, 150) + '...' : 'Nêu đúng định nghĩa / công thức / phương pháp giải.',
-        points: (totalScore * 0.4).toFixed(2),
+        content: defaultExplanation
+          ? defaultExplanation.slice(0, 150) + '...'
+          : 'Nêu đúng định nghĩa / công thức / phương pháp giải.',
+        points: formatScore(totalScore * 0.4),
       },
       {
         criterion: 'Ý 2',
         content: 'Thực hiện các bước biến đổi, tính toán hoặc lập luận chính xác.',
-        points: (totalScore * 0.4).toFixed(2),
+        points: formatScore(totalScore * 0.4),
       },
       {
         criterion: 'Ý 3',
         content: 'Kết luận đúng yêu cầu của bài toán, ghi đúng đơn vị (nếu có).',
-        points: (totalScore * 0.2).toFixed(2),
+        points: formatScore(totalScore * 0.2),
       },
     ];
   }
 
-  // Thử parse JSON nếu AI trả về mảng [{ criterion, points }]
   try {
     const parsed = JSON.parse(guide);
     if (Array.isArray(parsed) && parsed.length > 0) {
       return parsed.map((item, i) => ({
         criterion: item.criterion || `Ý ${i + 1}`,
         content: item.content || item.description || item.criterion || 'Yêu cầu đạt chuẩn',
-        points: item.points !== undefined ? item.points : (totalScore / parsed.length).toFixed(2),
+        points: formatScore(item.points !== undefined ? Number(item.points) : totalScore / parsed.length),
       }));
     }
   } catch {
-    // Không phải JSON, xử lý text phân dòng
+    // Không phải JSON
   }
 
-  // Xử lý chuỗi văn bản thông thường
   const lines = guide.split(/[\n;]+/).map((l) => l.trim()).filter(Boolean);
   if (lines.length > 1) {
-    const ptsPerLine = (totalScore / lines.length).toFixed(2);
+    const ptsPerLine = totalScore / lines.length;
     return lines.map((line, i) => {
-      // Tìm điểm số nếu có trong ngoặc: ví dụ (0,5đ) hoặc (0.5 điểm)
       const scoreMatch = line.match(/\((\d+([.,]\d+)?)\s*(đ|điểm)?\)/i);
-      const points = scoreMatch ? scoreMatch[1].replace(',', '.') : ptsPerLine;
+      const points = scoreMatch ? formatScore(Number(scoreMatch[1].replace(',', '.'))) : formatScore(ptsPerLine);
       const cleanContent = line.replace(/\((\d+([.,]\d+)?)\s*(đ|điểm)?\)/i, '').trim();
 
       return {
@@ -78,7 +87,7 @@ function parseScoringGuide(guide: string | undefined, totalScore: number, defaul
     {
       criterion: 'Toàn bài',
       content: guide,
-      points: totalScore.toFixed(2),
+      points: formatScore(totalScore),
     },
   ];
 }
@@ -89,165 +98,125 @@ export const ScoringTab: React.FC<ScoringTabProps> = ({
   questions,
   activeVersionCode,
 }) => {
-  const essayOrGuidedQuestions = questions.filter(
-    (q) => q.type === 'ESSAY' || Boolean(q.scoringGuide)
-  );
+  const deptDisplay = config.departmentName?.trim()
+    ? formatDepartmentForHeader(config.departmentName)
+    : 'SỞ GIÁO DỤC VÀ ĐÀO TẠO …………………';
+
+  const schoolDisplay = config.schoolName?.trim()
+    ? formatSchoolNameForHeader(config.schoolName)
+    : 'TRƯỜNG: …………………………………';
 
   return (
-    <div className="space-y-6 max-w-[210mm] mx-auto bg-white p-6 sm:p-10 rounded-xl border border-slate-300 shadow-md font-serif print:shadow-none print:border-none print:p-0">
-      {/* Header */}
-      <div className="border-b-2 border-slate-900 pb-4 text-center">
-        <p className="font-bold uppercase tracking-wider text-slate-800 text-xs">
-          {config.schoolName || 'TRƯỜNG THPT / THCS / TIỂU HỌC'}
-        </p>
-        <h2 className="font-bold uppercase text-base sm:text-lg text-slate-950 mt-1">
-          HƯỚNG DẪN CHẤM & BIỂU ĐIỂM CHI TIẾT
-        </h2>
-        <p className="text-xs text-slate-700 italic mt-0.5">
-          {exam.title} — MÃ ĐỀ: <strong className="text-blue-900 font-mono">{activeVersionCode}</strong> — Thang điểm chuẩn: {config.scale || 10} điểm
-        </p>
-      </div>
+    <div className="doc-viewport-bg py-4 px-2 sm:px-4">
+      <DocPage versionCode={activeVersionCode} footerText={`Mã đề ${activeVersionCode} – Hướng dẫn chấm`}>
+        {/* Header */}
+        <table className="doc-header-table">
+          <tbody>
+            <tr>
+              <td className="doc-header-left">
+                <div className="text-[12pt] font-normal uppercase">{deptDisplay}</div>
+                <div className="text-[12pt] font-bold uppercase mt-0.5">{schoolDisplay}</div>
+                <div className="doc-short-line" />
+              </td>
+              <td className="doc-header-right">
+                <div className="doc-exam-code-box">Mã đề: {activeVersionCode}</div>
+                <div className="text-[14pt] font-bold uppercase tracking-wide">
+                  HƯỚNG DẪN CHẤM & BIỂU ĐIỂM CHI TIẾT
+                </div>
+                <div className="text-[12pt] font-semibold mt-0.5">
+                  {(config.customSubject?.trim() || config.subject || 'MÔN HỌC').toUpperCase()}
+                  {config.grade ? ` – LỚP ${config.grade}` : ''}
+                </div>
+                <div className="text-[11pt] text-slate-700 italic mt-0.5">
+                  Thang điểm: {formatScore(config.scale || 10)} điểm – Năm học: {config.academicYear || getDefaultAcademicYear()}
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
 
-      {/* Thông tin thang điểm tổng quan */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 print:border print:border-slate-300 print:p-2">
-        <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-center">
-          <div className="text-[11px] text-slate-500 font-bold uppercase">Thang điểm toàn bài</div>
-          <div className="text-lg font-bold text-blue-800 mt-0.5">{config.scale || 10} điểm</div>
-        </div>
-        <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-center">
-          <div className="text-[11px] text-slate-500 font-bold uppercase">Bước làm tròn</div>
-          <div className="text-lg font-bold text-slate-800 mt-0.5">{config.roundingStep || 0.25} điểm</div>
-        </div>
-        <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-center">
-          <div className="text-[11px] text-slate-500 font-bold uppercase">Quy cách Đúng/Sai</div>
-          <div className="text-sm font-bold text-slate-800 mt-1">
-            {config.trueFalseProgressiveScoring !== false ? 'Lũy tiến Bộ GD&ĐT' : 'Điểm đều các ý'}
+        {/* HƯỚNG DẪN CHUNG */}
+        <div className="my-4 p-3 bg-slate-50 border border-slate-300 rounded text-xs leading-relaxed">
+          <div className="font-bold uppercase text-slate-900 mb-1">
+            NGUYÊN TẮC CHẤM CHUNG:
           </div>
+          <ul className="list-disc pl-5 space-y-1 text-slate-800">
+            <li>
+              Học sinh làm bài theo cách khác nhưng đúng và chặt chẽ vẫn cho điểm tối đa theo từng phần tương ứng.
+            </li>
+            <li>
+              Điểm toàn bài là tổng điểm các câu thành phần, làm tròn đến {formatScore(0.25)} hoặc {formatScore(0.1)} điểm theo quy chế.
+            </li>
+            <li>
+              Đối với câu trắc nghiệm nhiều lựa chọn: mỗi câu chỉ có 01 phương án đúng duy nhất.
+            </li>
+          </ul>
         </div>
-      </div>
 
-      {/* HƯỚNG DẪN CHẤM CHI TIẾT CHO TỪNG CÂU TỰ LUẬN (VÀ CÁC CÂU CÓ SCORING GUIDE) */}
-      <div className="space-y-6 pt-2">
-        <div className="font-bold text-slate-950 text-sm uppercase tracking-wide border-b border-slate-300 pb-1.5 flex items-center gap-2">
-          <ListOrdered className="w-4 h-4 text-blue-700 shrink-0" />
-          <span>Biểu điểm chi tiết cho các câu hỏi tự luận & yêu cầu cần đạt:</span>
-        </div>
-
-        {essayOrGuidedQuestions.length === 0 ? (
-          <div className="p-6 text-center border border-dashed border-slate-300 rounded-xl bg-slate-50 text-xs text-slate-600">
-            <Info className="w-6 h-6 mx-auto mb-2 text-slate-400" />
-            <p className="font-bold text-slate-800">Đề thi này không có câu tự luận dài.</p>
-            <p className="mt-1">
-              Điểm của các câu trắc nghiệm được chấm theo bảng đáp án ở Tab 2.
-            </p>
+        {/* BIỂU ĐIỂM CHI TIẾT THEO CÂU */}
+        <div className="mt-5 space-y-6">
+          <div className="doc-section-header mb-2 text-[12pt]">
+            BIỂU ĐIỂM VÀ TIÊU CHÍ ĐÁNH GIÁ TỪNG CÂU
           </div>
-        ) : (
-          essayOrGuidedQuestions.map((q) => {
-            const fullIndex = questions.findIndex((item) => item.id === q.id) + 1;
-            const criteria = parseScoringGuide(q.scoringGuide, q.score, q.explanation);
+
+          {questions.map((q, idx) => {
+            const criteria = parseScoringGuide(q.scoringGuide, q.score, q.explanation || '');
 
             return (
               <div
                 key={q.id}
                 style={{ breakInside: 'avoid', pageBreakInside: 'avoid' }}
-                className="border border-slate-300 rounded-xl overflow-hidden bg-white shadow-2xs space-y-0 print:border print:shadow-none print:break-inside-avoid"
+                className="doc-question-item border border-slate-300 rounded p-3 bg-white"
               >
-                {/* Tiêu đề câu hỏi */}
-                <div className="bg-slate-100 p-3 border-b border-slate-300 flex items-start justify-between gap-3 text-xs">
-                  <div>
-                    <span className="font-bold text-slate-900 text-sm">Câu {fullIndex}: </span>
-                    <MathText content={q.question} className="font-serif inline" />
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2 mb-2">
+                  <div className="font-bold text-slate-900 text-sm">
+                    Câu {idx + 1}. ({formatScore(q.score)} điểm) [{q.type} - {q.level}]
                   </div>
-                  <span className="font-bold text-blue-800 bg-white px-2.5 py-1 rounded border border-slate-300 shrink-0">
-                    {q.score.toFixed(2)} điểm
-                  </span>
+                  <div className="text-xs text-blue-900 font-bold">
+                    Đáp án: <span className="font-mono bg-blue-50 px-2 py-0.5 rounded border border-blue-200">{q.correctAnswer || 'Xem hướng dẫn'}</span>
+                  </div>
                 </div>
 
-                {/* Hình vẽ minh họa nếu có */}
-                <FigureView figure={q.figure} svgDiagram={q.svgDiagram} imageData={q.imageData} />
+                <div className="text-xs text-slate-800 mb-2">
+                  <span className="font-bold">Đề bài: </span>
+                  <MathText content={q.question} className="inline" />
+                </div>
 
-                {/* Bảng 3 cột: Ý / Tiêu chí | Nội dung yêu cầu | Điểm */}
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-300 text-slate-800 font-bold">
-                        <th className="py-2 px-3 w-24 text-center border-r border-slate-300">Ý / Tiêu chí</th>
-                        <th className="py-2 px-4 border-r border-slate-300">Nội dung yêu cầu (Chuẩn cần đạt)</th>
-                        <th className="py-2 px-3 w-20 text-center">Điểm</th>
+                {/* Bảng tiêu chí chấm */}
+                <table className="doc-table w-full text-xs">
+                  <thead>
+                    <tr>
+                      <th className="w-20 text-center">Ý / Tiêu chí</th>
+                      <th className="text-left">Nội dung yêu cầu cần đạt</th>
+                      <th className="w-20 text-right">Điểm</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {criteria.map((c, cIdx) => (
+                      <tr key={cIdx}>
+                        <td className="text-center font-bold text-slate-900">{c.criterion}</td>
+                        <td>
+                          <MathText content={c.content} className="inline" />
+                        </td>
+                        <td className="text-right font-bold text-blue-900">{c.points}</td>
                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200">
-                      {criteria.map((item, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50/50">
-                          <td className="py-2.5 px-3 text-center font-bold text-slate-800 border-r border-slate-200 bg-slate-50/30">
-                            {item.criterion}
-                          </td>
-                          <td className="py-2.5 px-4 text-slate-800 leading-relaxed border-r border-slate-200">
-                            <MathText content={item.content} />
-                          </td>
-                          <td className="py-2.5 px-3 text-center font-bold text-blue-700">
-                            {typeof item.points === 'number' ? item.points.toFixed(2) : item.points}đ
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Chân bảng: Điểm tối đa: X điểm */}
-                <div className="p-2.5 bg-slate-50 border-t border-slate-300 text-right text-xs font-bold text-slate-900">
-                  <span>Điểm tối đa: {q.score.toFixed(2)} điểm</span>
-                </div>
+                    ))}
+                    <tr className="font-bold bg-slate-100">
+                      <td colSpan={2} className="text-right uppercase">Tổng điểm câu {idx + 1}:</td>
+                      <td className="text-right text-blue-900">{formatScore(q.score)}</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             );
-          })
-        )}
-      </div>
+          })}
+        </div>
 
-      {/* BẢNG TỔNG HỢP TOÀN BỘ ĐIỂM SỐ TRONG ĐỀ THI */}
-      <div className="pt-4 border-t border-slate-300 space-y-3">
-        <div className="font-bold text-slate-950 text-xs uppercase tracking-wide">
-          Bảng tổng kết phân bổ điểm số toàn bài:
+        {/* Chân trang kết thúc */}
+        <div className="doc-end-notice mt-8">
+          <div className="doc-end-title">— HẾT HƯỚNG DẪN CHẤM —</div>
         </div>
-        <div className="overflow-x-auto rounded-lg border border-slate-300">
-          <table className="w-full text-xs text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-100 border-b border-slate-300 text-slate-800 font-bold">
-                <th className="p-2 w-14 text-center">Câu</th>
-                <th className="p-2">Dạng câu</th>
-                <th className="p-2">Mức độ</th>
-                <th className="p-2">Chủ đề kiến thức</th>
-                <th className="p-2 text-right">Điểm</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200">
-              {questions.map((q, idx) => (
-                <tr key={q.id} className="hover:bg-slate-50">
-                  <td className="p-2 text-center font-bold text-slate-800">{idx + 1}</td>
-                  <td className="p-2 font-medium text-slate-700">{q.type}</td>
-                  <td className="p-2">
-                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
-                      {q.level}
-                    </span>
-                  </td>
-                  <td className="p-2 text-slate-600 truncate max-w-xs">{q.topic}</td>
-                  <td className="p-2 text-right font-bold text-blue-700">{q.score.toFixed(2)}đ</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="bg-slate-100 font-bold border-t-2 border-slate-300 text-slate-900">
-                <td colSpan={4} className="p-2 text-right uppercase">
-                  TỔNG CỘNG ({questions.length} câu):
-                </td>
-                <td className="p-2 text-right font-bold text-blue-800 text-sm">
-                  {questions.reduce((sum, q) => sum + q.score, 0).toFixed(2)}đ
-                </td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      </div>
+      </DocPage>
     </div>
   );
 };

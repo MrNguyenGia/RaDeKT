@@ -220,6 +220,277 @@ function calculateTextSimilarity(a: string, b: string): number {
   return union > 0 ? intersection / union : 0;
 }
 
+export const FIGURE_TRIGGER_PHRASES = [
+  'hình vẽ',
+  'hình bên',
+  'hình dưới',
+  'như hình',
+  'bảng biến thiên',
+  'bảng xét dấu',
+  'đồ thị như',
+  'đường cong trong hình',
+  'biểu đồ sau',
+];
+
+/**
+ * Phát hiện mẫu bảng xét dấu / bảng biến thiên viết thành chữ thường trong câu dẫn:
+ * Từ 2 ký hiệu vô cực (∞, -\infty, +\infty) trở lên kèm chữ f'(x) hoặc y'
+ */
+export function hasPlainTextTablePattern(text?: string): boolean {
+  if (!text) return false;
+  // Đếm số ký hiệu vô cực: ∞, -\infty, +\infty, \infty
+  const infMatches = text.match(/(?:-\\infty|\+\\infty|\\infty|[-−]?\s*∞)/gi) || [];
+  const infCount = infMatches.length;
+
+  // Kiểm tra đạo hàm f'(x), f′(x), y', y′
+  const hasDeriv = /(?:f['′`]\s*\(\s*x\s*\)|y['′`]|f\^\(?1\)?\s*\(x\))/i.test(text);
+
+  return infCount >= 2 && hasDeriv;
+}
+
+/**
+ * Trả về true nếu câu dẫn chứa một trong các cụm từ yêu cầu hình minh họa/bảng
+ * hoặc chứa chuỗi bảng xét dấu/biến thiên dạng chữ thường
+ */
+export function questionNeedsFigure(q: { question?: string }): boolean {
+  const text = (q.question || '').toLowerCase();
+  const hasTrigger = FIGURE_TRIGGER_PHRASES.some((phrase) => text.includes(phrase));
+  if (hasTrigger) return true;
+  return hasPlainTextTablePattern(q.question);
+}
+
+/**
+ * Dự đoán loại figure cần có dựa vào nội dung câu hỏi
+ */
+export function detectRequiredFigureKind(
+  qText?: string
+): 'sign-table' | 'variation-table' | 'function-graph' | 'data-chart' | 'geometry' {
+  const text = (qText || '').toLowerCase();
+  if (hasPlainTextTablePattern(qText)) {
+    if (text.includes('biến thiên') || text.includes('mũi tên') || text.includes('y =')) return 'variation-table';
+    return 'sign-table';
+  }
+  if (text.includes('bảng xét dấu')) return 'sign-table';
+  if (text.includes('bảng biến thiên')) return 'variation-table';
+  if (text.includes('đồ thị') || text.includes('đường cong')) return 'function-graph';
+  if (text.includes('biểu đồ')) return 'data-chart';
+  if (text.includes('hàm số') || text.includes('f(x)') || text.includes('y =')) return 'function-graph';
+  return 'geometry';
+}
+
+/**
+ * Kiểm tra tính hợp lệ của đối tượng QuestionFigure
+ */
+export function validateFigure(kind: string, obj: any): { isValid: boolean; error?: string } {
+  if (!obj || typeof obj !== 'object') {
+    return { isValid: false, error: 'Dữ liệu figure không phải là đối tượng hợp lệ.' };
+  }
+
+  const effectiveKind = obj.kind || kind;
+  if (!effectiveKind) {
+    return { isValid: false, error: 'Thiếu trường "kind" trong figure.' };
+  }
+
+  switch (effectiveKind) {
+    case 'function-graph': {
+      if (!Array.isArray(obj.functions) || obj.functions.length === 0) {
+        return { isValid: false, error: 'function-graph cần ít nhất một hàm số trong mảng functions.' };
+      }
+      for (let i = 0; i < obj.functions.length; i++) {
+        const fn = obj.functions[i];
+        if (!fn || typeof fn.expr !== 'string' || !fn.expr.trim()) {
+          return { isValid: false, error: `Hàm số thứ ${i + 1} thiếu biểu thức expr.` };
+        }
+        try {
+          compile(fn.expr);
+        } catch (e: any) {
+          return {
+            isValid: false,
+            error: `Biểu thức hàm số "${fn.expr}" không parse được: ${e?.message || 'Lỗi cú pháp mathjs'}`,
+          };
+        }
+      }
+      if (!Array.isArray(obj.xRange) || obj.xRange.length !== 2) {
+        return { isValid: false, error: 'xRange phải là mảng gồm 2 số [minX, maxX].' };
+      }
+      if (
+        typeof obj.xRange[0] !== 'number' ||
+        typeof obj.xRange[1] !== 'number' ||
+        obj.xRange[0] >= obj.xRange[1]
+      ) {
+        return { isValid: false, error: 'xRange không hợp lệ (minX phải nhỏ hơn maxX).' };
+      }
+      return { isValid: true };
+    }
+
+    case 'variation-table': {
+      if (!Array.isArray(obj.xValues) || obj.xValues.length < 2) {
+        return { isValid: false, error: 'variation-table cần xValues gồm ít nhất 2 mốc.' };
+      }
+      if (!Array.isArray(obj.yValues) || obj.yValues.length < 2) {
+        return { isValid: false, error: 'variation-table cần yValues gồm ít nhất 2 giá trị.' };
+      }
+      if (!Array.isArray(obj.trends) || obj.trends.length < 1) {
+        return { isValid: false, error: 'variation-table cần mảng trends chỉ hướng mũi tên (up/down).' };
+      }
+      for (const t of obj.trends) {
+        if (t !== 'up' && t !== 'down') {
+          return { isValid: false, error: `Giá trị trend "${t}" không hợp lệ, phải là "up" hoặc "down".` };
+        }
+      }
+      return { isValid: true };
+    }
+
+    case 'sign-table': {
+      if (!obj.rowLabel || typeof obj.rowLabel !== 'string') {
+        return { isValid: false, error: 'sign-table cần có nhãn rowLabel (ví dụ "f\'(x)" hoặc "y\'").' };
+      }
+      if (!Array.isArray(obj.xValues) || obj.xValues.length < 2) {
+        return { isValid: false, error: 'sign-table cần xValues có ít nhất 2 mốc giá trị.' };
+      }
+      const expectedIntervals = obj.xValues.length - 1;
+      if (!Array.isArray(obj.intervalSigns) || obj.intervalSigns.length !== expectedIntervals) {
+        return {
+          isValid: false,
+          error: `sign-table có ${obj.xValues.length} mốc x thì intervalSigns phải có độ dài là ${expectedIntervals} (hiện có ${obj.intervalSigns?.length || 0}).`,
+        };
+      }
+      for (const s of obj.intervalSigns) {
+        if (s !== '+' && s !== '-') {
+          return { isValid: false, error: `Dấu "${s}" trong intervalSigns không hợp lệ, phải là "+" hoặc "-".` };
+        }
+      }
+      const expectedPoints = obj.xValues.length - 2;
+      if (!Array.isArray(obj.pointMarks) || obj.pointMarks.length !== expectedPoints) {
+        return {
+          isValid: false,
+          error: `sign-table có ${obj.xValues.length} mốc x thì pointMarks phải có độ dài là ${expectedPoints} (hiện có ${obj.pointMarks?.length || 0}).`,
+        };
+      }
+      for (const pm of obj.pointMarks) {
+        if (pm !== '0' && pm !== '||' && pm !== '') {
+          return { isValid: false, error: `Ký hiệu "${pm}" trong pointMarks không hợp lệ, phải là '0', '||' hoặc ''.` };
+        }
+      }
+      return { isValid: true };
+    }
+
+    case 'geometry': {
+      if (!Array.isArray(obj.points) || obj.points.length < 2) {
+        return { isValid: false, error: 'geometry cần ít nhất 2 điểm trong mảng points.' };
+      }
+      return { isValid: true };
+    }
+
+    case 'data-chart': {
+      if (!Array.isArray(obj.labels) || obj.labels.length === 0) {
+        return { isValid: false, error: 'data-chart cần ít nhất một nhãn trong mảng labels.' };
+      }
+      if (!Array.isArray(obj.series) || obj.series.length === 0) {
+        return { isValid: false, error: 'data-chart cần ít nhất một chuỗi số liệu trong mảng series.' };
+      }
+      return { isValid: true };
+    }
+
+    case 'none':
+      return { isValid: true };
+
+    default:
+      return { isValid: false, error: `Loại hình vẽ "${effectiveKind}" không được hỗ trợ.` };
+  }
+}
+
+/**
+ * Kiểm tra lời giải tự mâu thuẫn với đáp án hoặc tự ý đổi đề (Tiêu chí 6):
+ * - explanation hoặc scoringGuide chứa: "Tuy nhiên, nếu đề bài", "giả sử đề bài", "như bản gốc",
+ *   "kiểm tra lại tính toán", "không có giá trị nào", "không thỏa mãn" -> ERROR
+ */
+export function detectSelfContradictoryExplanation(q: {
+  explanation?: string;
+  scoringGuide?: string;
+  correctAnswer?: string;
+  type?: QuestionType;
+  options?: string[];
+}): { isContradictory: boolean; reason?: string; phrase?: string } {
+  const text = `${q.explanation || ''} ${q.scoringGuide || ''}`.toLowerCase();
+  if (!text.trim()) return { isContradictory: false };
+
+  // 1. Nhóm đổi đề hoặc tự ý giả thiết
+  if (/tuy nhiên,?\s*nếu đề bài/i.test(text)) {
+    return {
+      isContradictory: true,
+      phrase: 'Tuy nhiên, nếu đề bài',
+      reason: 'Lời giải tự mâu thuẫn: chứa cụm "Tuy nhiên, nếu đề bài" (đổi đề giữa chừng).',
+    };
+  }
+
+  if (/giả sử đề bài/i.test(text)) {
+    return {
+      isContradictory: true,
+      phrase: 'giả sử đề bài',
+      reason: 'Lời giải tự mâu thuẫn: chứa cụm "giả sử đề bài" (tự ý thay đổi giả thiết đề thi).',
+    };
+  }
+
+  if (/như bản gốc/i.test(text)) {
+    return {
+      isContradictory: true,
+      phrase: 'như bản gốc',
+      reason: 'Lời giải tự mâu thuẫn: chứa cụm "như bản gốc".',
+    };
+  }
+
+  if (/kiểm tra lại tính toán/i.test(text)) {
+    return {
+      isContradictory: true,
+      phrase: 'kiểm tra lại tính toán',
+      reason: 'Lời giải tự mâu thuẫn: chứa cụm "kiểm tra lại tính toán" (nghi vấn sai đề).',
+    };
+  }
+
+  // 2. Nhóm "không có giá trị nào"
+  if (/không có giá trị nào/i.test(text)) {
+    return {
+      isContradictory: true,
+      phrase: 'không có giá trị nào',
+      reason: 'Lời giải tự mâu thuẫn: kết luận "không có giá trị nào" nhưng đề bài vẫn có đáp án.',
+    };
+  }
+
+  // 3. Nhóm "không thỏa mãn"
+  if (
+    /không có\s+.*thỏa mãn/i.test(text) ||
+    /không thỏa mãn\s+(?:đề bài|yêu cầu|bài toán)/i.test(text) ||
+    /(?:vậy|kết luận|do đó|suy ra)\s+.*không thỏa mãn/i.test(text) ||
+    /đều không thỏa mãn/i.test(text) ||
+    /tất cả\s+.*không thỏa mãn/i.test(text)
+  ) {
+    return {
+      isContradictory: true,
+      phrase: 'không thỏa mãn',
+      reason: 'Lời giải tự mâu thuẫn: kết luận không thỏa mãn yêu cầu bài toán.',
+    };
+  }
+
+  // Kiểm tra trực tiếp cụm "không thỏa mãn"
+  const corr = (q.correctAnswer || '').trim().toLowerCase();
+  const corrIsZero = corr === '0' || corr === 'không' || corr === 'vô nghiệm';
+  if (
+    text.includes('không thỏa mãn') &&
+    !corrIsZero &&
+    !text.includes('thỏa mãn điều kiện') &&
+    !text.includes('loại do không thỏa mãn')
+  ) {
+    return {
+      isContradictory: true,
+      phrase: 'không thỏa mãn',
+      reason: 'Lời giải tự mâu thuẫn: chứa cụm "không thỏa mãn" mâu thuẫn với đáp án đề thi.',
+    };
+  }
+
+  return { isContradictory: false };
+}
+
 /**
  * HỆ THỐNG KIỂM TRA CHẤT LƯỢNG BẰNG CODE (Tiêu chí 1 đến 7)
  * Chạy trực tiếp trên trình duyệt hoặc máy chủ, tốc độ tức thời (< 50ms)
@@ -384,7 +655,8 @@ export function runCodeQualityCheck(exam: Exam): QualityIssue[] {
 
     // Kiểm tra trắc nghiệm 4 lựa chọn (MCQ4)
     if (q.type === 'MCQ4') {
-      if (!Array.isArray(q.options) || q.options.length < 4) {
+      const letters = ['A', 'B', 'C', 'D'];
+      if (!Array.isArray(q.options) || q.options.length !== 4) {
         issues.push({
           questionId: q.id,
           criterion: 5,
@@ -393,14 +665,56 @@ export function runCodeQualityCheck(exam: Exam): QualityIssue[] {
           suggestedFix: `Bổ sung đủ 4 phương án A, B, C, D cho Câu ${qNum}.`,
         });
       } else {
-        const hasEmptyOpt = q.options.some((opt) => !opt || opt.replace(/^[A-D]\.\s*/i, '').trim().length === 0);
+        const cleanOpts = q.options.map((opt) => (opt ? String(opt).replace(/^[A-D]\.\s*/i, '').trim() : ''));
+
+        // 1. Có phương án rỗng hoặc chỉ gồm khoảng trắng
+        const hasEmptyOpt = cleanOpts.some((txt) => txt.length === 0);
         if (hasEmptyOpt) {
           issues.push({
             questionId: q.id,
             criterion: 5,
             severity: 'ERROR',
-            message: `Câu ${qNum} có phương án lựa chọn bị để trống.`,
-            suggestedFix: `Điền đầy đủ nội dung cho tất cả phương án của Câu ${qNum}.`,
+            message: `Câu ${qNum} có phương án rỗng hoặc chỉ gồm khoảng trắng.`,
+            suggestedFix: `Điền đầy đủ nội dung cho tất cả 4 phương án của Câu ${qNum}.`,
+          });
+        }
+
+        // 2. Có phương án trùng nhau
+        const lowerTexts = cleanOpts.map((t) => t.toLowerCase());
+        const hasDuplicates = new Set(lowerTexts).size < lowerTexts.length;
+        if (hasDuplicates) {
+          issues.push({
+            questionId: q.id,
+            criterion: 5,
+            severity: 'ERROR',
+            message: `Câu ${qNum} có các phương án lựa chọn trùng nhau.`,
+            suggestedFix: `Thay đổi các phương án bị trùng lặp thành các giá trị phân biệt.`,
+          });
+        }
+
+        // 3. Phương án khớp mẫu “Phương án [A-D]”
+        const hasPlaceholderOpt = cleanOpts.some((txt) => /^phương án\s+[a-d]$/i.test(txt));
+        if (hasPlaceholderOpt) {
+          issues.push({
+            questionId: q.id,
+            criterion: 5,
+            severity: 'ERROR',
+            message: `Câu ${qNum} chứa phương án giữ chỗ ("Phương án A/B/C/D").`,
+            suggestedFix: `Biên soạn nội dung phương án thực tế thay vì để phương án giữ chỗ.`,
+          });
+        }
+
+        // 4. Đáp án đúng không nằm trong các phương án
+        const corr = (q.correctAnswer || '').trim().toUpperCase();
+        const isLetterMatch = letters.includes(corr);
+        const isTextMatch = cleanOpts.some((t) => t.length > 0 && t.toLowerCase() === corr.toLowerCase());
+        if (!isLetterMatch && !isTextMatch) {
+          issues.push({
+            questionId: q.id,
+            criterion: 5,
+            severity: 'ERROR',
+            message: `Câu ${qNum} có đáp án đúng ("${q.correctAnswer || 'trống'}") không nằm trong các phương án A, B, C, D.`,
+            suggestedFix: `Chọn đáp án đúng nằm trong 4 phương án A, B, C, D đã biên soạn.`,
           });
         }
       }
@@ -487,6 +801,18 @@ export function runCodeQualityCheck(exam: Exam): QualityIssue[] {
         });
       }
     }
+
+    // Kiểm tra lời giải tự mâu thuẫn hoặc tự ý đổi đề (Tiêu chí 6 -> ERROR)
+    const contra = detectSelfContradictoryExplanation(q);
+    if (contra.isContradictory) {
+      issues.push({
+        questionId: q.id,
+        criterion: 6,
+        severity: 'ERROR',
+        message: `Câu ${qNum}: ${contra.reason}`,
+        suggestedFix: 'Giải trọn vẹn đúng đề đã cho, không đổi đề trong lời giải, kết luận cuối cùng phải trùng correctAnswer.',
+      });
+    }
   });
 
   // =========================================================================
@@ -516,30 +842,76 @@ export function runCodeQualityCheck(exam: Exam): QualityIssue[] {
   }
 
   // =========================================================================
-  // TIÊU CHÍ 10: Kiểm tra hình vẽ, đồ thị và tính khớp của hàm số
+  // TIÊU CHÍ 10: Kiểm tra hình vẽ, đồ thị và bảng biến thiên / bảng xét dấu
   // =========================================================================
-  const FIGURE_KEYWORDS = ['hình vẽ', 'hình bên', 'đồ thị', 'bảng biến thiên', 'biểu đồ'];
-
   questions.forEach((q, idx) => {
     const qNum = idx + 1;
-    const qLower = (q.question || '').toLowerCase();
-    const hasFigureKeyword = FIGURE_KEYWORDS.some((kw) => qLower.includes(kw));
-    const hasFigureData = Boolean(
-      q.imageData?.dataUrl || q.figure || (q.svgDiagram && q.svgDiagram.trim().startsWith('<svg'))
-    );
+    const needsFig = questionNeedsFigure(q);
 
-    // 1. Nhắc tới hình nhưng không có figure
-    if (hasFigureKeyword && !hasFigureData) {
+    // 1. Nếu câu KHÔNG nhắc hình mà lại có figure -> bỏ figure đó (không vẽ hình thừa)
+    if (!needsFig && !q.imageData?.dataUrl && (q.figure || q.svgDiagram)) {
+      q.figure = undefined;
+      q.svgDiagram = undefined;
+    }
+
+    // 2. Kiểm tra tính hợp lệ của figure nếu có
+    let isFigureDataValid = false;
+    if (q.imageData?.dataUrl) {
+      isFigureDataValid = true;
+    } else if (q.figure) {
+      const figValidation = validateFigure(q.figure.kind, q.figure);
+      if (figValidation.isValid) {
+        isFigureDataValid = true;
+      } else {
+        // Figure lỗi cú pháp -> coi như thiếu hình theo mục 1
+        q.figure = undefined;
+        issues.push({
+          questionId: q.id,
+          criterion: 10,
+          severity: 'ERROR',
+          message: `Câu ${qNum}: Dữ liệu hình vẽ không hợp lệ: ${figValidation.error}`,
+          suggestedFix: `Sửa lại cấu trúc figure chuẩn hoặc dùng câu hỏi không phụ thuộc hình.`,
+        });
+      }
+    } else if (q.svgDiagram && q.svgDiagram.trim().startsWith('<svg')) {
+      isFigureDataValid = true;
+    }
+
+    // 3. Câu CẦN hình mà thiếu figure (hoặc imageData) -> lỗi ERROR
+    if (needsFig && !isFigureDataValid) {
+      const neededKind = detectRequiredFigureKind(q.question);
+      const kindHint =
+        neededKind === 'variation-table'
+          ? 'bảng biến thiên → variation-table'
+          : neededKind === 'sign-table'
+          ? 'bảng xét dấu → sign-table'
+          : neededKind === 'function-graph'
+          ? 'đồ thị → function-graph'
+          : 'hình vẽ → geometry / data-chart';
+
       issues.push({
         questionId: q.id,
         criterion: 10,
         severity: 'ERROR',
-        message: `Câu ${qNum} có nhắc tới hình ảnh/đồ thị nhưng thiếu dữ liệu hình vẽ (figure).`,
-        suggestedFix: 'phải kèm figure hoặc bỏ phụ thuộc hình',
+        message: `Câu ${qNum} có nhắc tới hình ảnh/bảng/đồ thị nhưng thiếu dữ liệu hình vẽ (figure).`,
+        suggestedFix: `Bổ sung figureKind="${neededKind}" (${kindHint}).`,
       });
     }
 
-    // 2. Câu đồ thị có optionExprs: tính giá trị hàm trong figure và hàm phương án đúng tại 10 điểm
+    // 4. CẤM viết bảng xét dấu hoặc bảng biến thiên bằng chữ thường trong câu dẫn
+    const textTablePattern = /(\bx\s*\|\s*.*(-\\infty|\\infty|\+\\infty).*\||(\bf'\(x\)|\by'\b|\bf\(x\))\s*\|\s*[\+\-0\s\|]{3,}|x\s+[\-−]\s*∞)/i;
+    const hasPlainTable = textTablePattern.test(q.question || '') || hasPlainTextTablePattern(q.question);
+    if (hasPlainTable) {
+      issues.push({
+        questionId: q.id,
+        criterion: 10,
+        severity: 'ERROR',
+        message: `Câu ${qNum}: Cấm viết bảng xét dấu hoặc bảng biến thiên bằng chữ thường trong câu dẫn (ví dụ: chuỗi chứa từ 2 ký hiệu ∞ kèm f'(x) hoặc y'). Bắt buộc dùng figure kiểu sign-table hoặc variation-table.`,
+        suggestedFix: `Xóa đoạn bảng text trong đề bài và chuyển vào figureKind="sign-table" hoặc "variation-table".`,
+      });
+    }
+
+    // 5. Câu đồ thị có optionExprs: tính giá trị hàm trong figure và hàm phương án đúng tại 10 điểm
     if (
       q.figure &&
       q.figure.kind === 'function-graph' &&
@@ -605,4 +977,94 @@ export function runCodeQualityCheck(exam: Exam): QualityIssue[] {
   });
 
   return issues;
+}
+
+export interface FaultyQuestionInfo {
+  index: number;
+  question: Question;
+  reasons: string[];
+}
+
+/**
+ * Thu thập toàn bộ câu hỏi đang có lỗi ERROR hoặc needsReview = true
+ */
+export function getFaultyQuestions(
+  questions: Question[],
+  config?: ExamConfig,
+  currentExam?: Exam
+): FaultyQuestionInfo[] {
+  const issues = runCodeQualityCheck({
+    id: currentExam?.id || 'exam-check',
+    title: currentExam?.title || 'Đề kiểm tra',
+    config: config || ({} as any),
+    blueprint: currentExam?.blueprint || [],
+    questions,
+    versions: currentExam?.versions || [],
+    createdAt: '',
+    updatedAt: '',
+  });
+
+  const issuesByQId = new Map<string, string[]>();
+  issues.forEach((iss) => {
+    if (iss.severity === 'ERROR' && iss.questionId) {
+      const arr = issuesByQId.get(iss.questionId) || [];
+      if (!arr.includes(iss.message)) arr.push(iss.message);
+      issuesByQId.set(iss.questionId, arr);
+    }
+  });
+
+  const result: FaultyQuestionInfo[] = [];
+
+  questions.forEach((q, idx) => {
+    const errorReasons = issuesByQId.get(q.id) || [];
+    const isFaulty = Boolean(q.needsReview || errorReasons.length > 0);
+
+    if (isFaulty) {
+      const reasons: string[] = [];
+      if (q.reviewNote) {
+        reasons.push(q.reviewNote);
+      }
+      errorReasons.forEach((r) => {
+        if (!reasons.includes(r)) reasons.push(r);
+      });
+      if (reasons.length === 0) {
+        reasons.push('Cần giáo viên kiểm tra nội dung');
+      }
+      result.push({
+        index: idx + 1,
+        question: q,
+        reasons,
+      });
+    }
+  });
+
+  return result;
+}
+
+/**
+ * Trả về lý do lỗi ngắn gọn của câu hỏi để chèn chú thích [CẦN KIỂM TRA: lý do]
+ */
+export function getQuestionErrorNote(q: Question): string | null {
+  if (q.reviewNote) return q.reviewNote;
+  if (q.type === 'MCQ4') {
+    if (!Array.isArray(q.options) || q.options.length !== 4) return 'Không đủ 4 phương án A, B, C, D';
+    const cleanOpts = q.options.map((opt) => (opt ? String(opt).replace(/^[A-D]\.\s*/i, '').trim() : ''));
+    if (cleanOpts.some((t) => t.length === 0)) return 'Có phương án rỗng hoặc chỉ khoảng trắng';
+    if (new Set(cleanOpts.map((t) => t.toLowerCase())).size < cleanOpts.length) return 'Các phương án trùng nhau';
+    if (cleanOpts.some((t) => /^phương án\s+[a-d]$/i.test(t))) return 'Chứa phương án giữ chỗ ("Phương án A/B/C/D")';
+    const letters = ['A', 'B', 'C', 'D'];
+    const corr = (q.correctAnswer || '').trim().toUpperCase();
+    if (!letters.includes(corr) && !cleanOpts.some((t) => t.length > 0 && t.toLowerCase() === corr.toLowerCase())) {
+      return 'Đáp án đúng không nằm trong các phương án';
+    }
+  }
+  if (questionNeedsFigure(q) && !q.figure && !q.imageData?.dataUrl) {
+    return 'Thiếu hình minh họa';
+  }
+  const contra = detectSelfContradictoryExplanation(q);
+  if (contra.isContradictory) {
+    return contra.reason || 'Lời giải tự mâu thuẫn với đáp án';
+  }
+  if (q.needsReview) return 'Cần giáo viên kiểm tra';
+  return null;
 }

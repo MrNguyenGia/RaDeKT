@@ -9,6 +9,16 @@
 
 import { convertPercentagesToCounts, autoFillBlueprintMatrix, validateBlueprintMatrix } from './blueprint';
 import { allocateIntegerScores, calculateCluster4ProgressiveScore, validateTotalExamScore } from './scoring';
+import { figureToSvg } from './figureRenderer';
+import {
+  runCodeQualityCheck,
+  getFaultyQuestions,
+  hasPlainTextTablePattern,
+  detectSelfContradictoryExplanation,
+} from './validate';
+import { getDefaultAcademicYear, formatSchoolNameForHeader } from '../config';
+import { compareAnswersWithCode, parseMathNumber } from '../services/quality';
+import { Question, QuestionFigure } from '../types';
 
 export interface TestCaseResult {
   name: string;
@@ -147,6 +157,308 @@ export function selfTest(): SelfTestReport {
     expected: '1 ý = 0.1đ; 2 ý = 0.25đ; 3 ý = 0.5đ; 4 ý = 1.0đ',
     actual: `1 ý = ${p1}đ; 2 ý = ${p2}đ; 3 ý = ${p3}đ; 4 ý = ${p4}đ`,
     details: 'Đúng chuẩn cấu trúc thi tốt nghiệp THPT 2025',
+  });
+
+  // =========================================================================
+  // TEST 6: Đồng bộ vẽ hình figureToSvg() cho toàn bộ các kiểu figure
+  // (function-graph, geometry, variation-table, sign-table, data-chart)
+  // =========================================================================
+  const sampleFunctionGraph: QuestionFigure = {
+    kind: 'function-graph',
+    functions: [{ expr: 'x^3 - 3*x' }],
+    xRange: [-3, 3],
+    yRange: [-4, 4],
+    studentVisibleLabels: ['A'],
+  };
+
+  const sampleGeometry: QuestionFigure = {
+    kind: 'geometry',
+    points: [
+      { id: 'A', x: 0, y: 0, label: 'A' },
+      { id: 'B', x: 4, y: 0, label: 'B' },
+      { id: 'C', x: 0, y: 3, label: 'C' },
+    ],
+    segments: [['A', 'B'], ['B', 'C'], ['C', 'A']],
+  };
+
+  const sampleVariationTable: QuestionFigure = {
+    kind: 'variation-table',
+    xValues: ['-\\infty', '-1', '1', '+\\infty'],
+    yValues: ['-\\infty', '2', '-2', '+\\infty'],
+    trends: ['up', 'down', 'up'],
+    derivativeSigns: ['+', '-', '+'],
+  };
+
+  const sampleSignTable: QuestionFigure = {
+    kind: 'sign-table',
+    rowLabel: "f'(x)",
+    xValues: ['-\\infty', '-2', '1', '+\\infty'],
+    intervalSigns: ['+', '-', '+'],
+    pointMarks: ['0', '||'],
+  };
+
+  const sampleDataChart: QuestionFigure = {
+    kind: 'data-chart',
+    chartType: 'bar',
+    labels: ['Lớp 10', 'Lớp 11', 'Lớp 12'],
+    series: [{ name: 'Học sinh giỏi', values: [25, 30, 42] }],
+  };
+
+  const svgGraph = figureToSvg(sampleFunctionGraph);
+  const svgGeom = figureToSvg(sampleGeometry);
+  const svgVar = figureToSvg(sampleVariationTable);
+  const svgSign = figureToSvg(sampleSignTable);
+  const svgChart = figureToSvg(sampleDataChart);
+
+  const test6Passed =
+    svgGraph.startsWith('<svg') && !svgGraph.includes('Hình vẽ gặp lỗi') &&
+    svgGeom.startsWith('<svg') && !svgGeom.includes('Hình vẽ gặp lỗi') &&
+    svgVar.startsWith('<svg') && !svgVar.includes('Hình vẽ gặp lỗi') &&
+    svgSign.startsWith('<svg') && !svgSign.includes('Hình vẽ gặp lỗi') &&
+    svgChart.startsWith('<svg') && !svgChart.includes('Hình vẽ gặp lỗi');
+
+  results.push({
+    name: 'Đồng bộ vẽ hình (function-graph, geometry, variation-table, sign-table, data-chart)',
+    passed: test6Passed,
+    expected: 'Tất cả 5 kiểu figure đều render thành SVG hợp lệ không lỗi',
+    actual: test6Passed
+      ? 'Đủ 5/5 kiểu figure vẽ thành công chuẩn sư phạm'
+      : 'Có ít nhất 1 kiểu figure bị lỗi render',
+    details: 'Được dùng chung qua hàm figureToSvg() cho tab Đề, Đáp án, In, Sao chép, Xuất Word',
+  });
+
+  // =========================================================================
+  // TEST 7: Hiện khung đỏ cảnh báo khi figure bị lỗi thay vì bỏ trống
+  // =========================================================================
+  const invalidFigure = {
+    kind: 'function-graph',
+    functions: [{ expr: 'invalid??syntax***' }],
+    xRange: [1, -1], // minX >= maxX
+  } as any;
+
+  const svgError = figureToSvg(invalidFigure);
+  const test7Passed =
+    svgError.includes('<svg') &&
+    (svgError.includes('Hình vẽ gặp lỗi') || svgError.includes('#fff1f2') || svgError.includes('#e11d48'));
+
+  results.push({
+    name: 'Xử lý lỗi hình vẽ: Hiện khung đỏ thay vì bỏ trống',
+    passed: test7Passed,
+    expected: 'SVG chứa khung đỏ cảnh báo lỗi (#fff1f2, #e11d48)',
+    actual: test7Passed
+      ? 'Đã hiển thị khung đỏ cảnh báo trực quan'
+      : 'Không tạo khung đỏ khi lỗi',
+    details: 'Giúp giáo viên nhận biết lỗi đồ thị/hình vẽ ngay lập tức',
+  });
+
+  // =========================================================================
+  // TEST 8: Kiểm tra phát hiện lỗi phương án MCQ4 trong Tiêu chí 5
+  // =========================================================================
+  const dummyPlaceholderMCQ: Question = {
+    id: 'q_test_placeholder',
+    slotId: 's1',
+    subject: 'Toán',
+    topic: 'Khảo sát hàm số',
+    type: 'MCQ4',
+    level: 'NB',
+    question: 'Nghiệm của phương trình $x^2 - 4 = 0$ là:',
+    options: ['A. Phương án A', 'B. Phương án B', 'C. Phương án C', 'D. Phương án D'],
+    correctAnswer: 'A',
+    explanation: 'Giải phương trình được nghiệm x = ±2.',
+    score: 0.25,
+    needsReview: false,
+    isTeacherWritten: false,
+  };
+
+  const issuesTest8 = runCodeQualityCheck({
+    id: 'exam_test_8',
+    title: 'Kiểm thử MCQ4',
+    config: {} as any,
+    blueprint: [],
+    questions: [dummyPlaceholderMCQ],
+    versions: [],
+    createdAt: '',
+    updatedAt: '',
+  });
+
+  const test8HasPlaceholderError = issuesTest8.some(
+    (iss) => iss.criterion === 5 && iss.severity === 'ERROR' && iss.message.includes('phương án giữ chỗ')
+  );
+
+  results.push({
+    name: 'Tiêu chí 5: Phát hiện và bắt lỗi phương án giữ chỗ MCQ4',
+    passed: test8HasPlaceholderError,
+    expected: 'Báo lỗi ERROR khi options chứa "Phương án A/B/C/D"',
+    actual: test8HasPlaceholderError
+      ? 'Đã phát hiện và gán cờ ERROR chính xác'
+      : 'Không phát hiện được phương án giữ chỗ',
+    details: 'Đảm bảo không bao giờ xuất đề có chứa chữ "Phương án A/B/C/D"',
+  });
+
+  // =========================================================================
+  // TEST 9: Cấm bảng xét dấu / bảng biến thiên viết bằng chữ thường trong câu dẫn
+  // =========================================================================
+  const textWithPlainTable = 'Cho hàm số có bảng xét dấu: x −∞ −2 1 +∞ f′(x) − 0 + 0 −. Khẳng định nào đúng?';
+  const detectedPlainTable = hasPlainTextTablePattern(textWithPlainTable);
+
+  const dummyQuestionWithTextTable: Question = {
+    id: 'q_test_text_table',
+    slotId: 's2',
+    subject: 'Toán',
+    topic: 'Khảo sát hàm số',
+    type: 'MCQ4',
+    level: 'NB',
+    question: textWithPlainTable,
+    options: ['A. Hàm số nghịch biến', 'B. Hàm số đồng biến', 'C. Cực đại tại 1', 'D. Cực tiểu tại -2'],
+    correctAnswer: 'A',
+    explanation: 'Dựa vào bảng xét dấu...',
+    score: 0.25,
+    needsReview: false,
+    isTeacherWritten: false,
+  };
+
+  const issuesTest9 = runCodeQualityCheck({
+    id: 'exam_test_9',
+    title: 'Kiểm thử bảng chữ thường',
+    config: {} as any,
+    blueprint: [],
+    questions: [dummyQuestionWithTextTable],
+    versions: [],
+    createdAt: '',
+    updatedAt: '',
+  });
+
+  const test9HasTableError =
+    detectedPlainTable &&
+    issuesTest9.some(
+      (iss) => iss.criterion === 10 && iss.severity === 'ERROR' && iss.message.includes('chữ thường')
+    );
+
+  results.push({
+    name: 'Cấm bảng xét dấu/biến thiên viết chữ thường trong câu dẫn',
+    passed: test9HasTableError,
+    expected: 'Nhận diện chuỗi từ 2 ký hiệu ∞ kèm f′(x)/y′ là ERROR và yêu cầu dùng figure',
+    actual: test9HasTableError
+      ? 'Đã phát hiện và yêu cầu chuyển sang figureKind="sign-table"'
+      : 'Không bắt được lỗi bảng chữ thường',
+    details: 'Tránh tình trạng AI lười vẽ hình mà viết bảng x, f′(x) xộc xệch trong câu dẫn',
+  });
+
+  // =========================================================================
+  // TEST 10: Chặn xuất khi còn lỗi (getFaultyQuestions)
+  // =========================================================================
+  const faultyList = getFaultyQuestions([dummyPlaceholderMCQ, dummyQuestionWithTextTable]);
+  const test10Passed = faultyList.length === 2 && faultyList[0].index === 1 && faultyList[1].index === 2;
+
+  results.push({
+    name: 'Thu thập câu lỗi và chặn xuất (getFaultyQuestions)',
+    passed: test10Passed,
+    expected: 'Liệt kê đúng 2 câu lỗi với vị trí và lý do đầy đủ',
+    actual: test10Passed
+      ? `Đã thu thập đủ ${faultyList.length} câu lỗi sẵn sàng cho hộp thoại chặn xuất`
+      : 'Thu thập câu lỗi thất bại',
+    details: 'Dùng cho dòng đỏ đầu tab Đề và hộp xác nhận 3 lựa chọn khi bấm In, Sao chép, Xuất Word/PDF',
+  });
+
+  // =========================================================================
+  // TEST 11: Năm học và tên trường mặc định
+  // - Ô Tên trường trống -> "TRƯỜNG: ........................................"
+  // - Ô Tên trường có chữ -> in hoa chữ đó
+  // - Năm học: tháng 8 trở đi là năm nay - năm sau, trước tháng 8 là năm trước - năm nay
+  // =========================================================================
+  const schoolBlank = formatSchoolNameForHeader('');
+  const schoolCustom = formatSchoolNameForHeader('Trường THPT Chu Văn An');
+  const yearAug = getDefaultAcademicYear(new Date(2025, 7, 15)); // Tháng 8 (index 7) -> 2025 - 2026
+  const yearMar = getDefaultAcademicYear(new Date(2025, 2, 15)); // Tháng 3 (index 2) -> 2024 - 2025
+
+  const test11Passed =
+    schoolBlank === 'TRƯỜNG: ........................................' &&
+    schoolCustom === 'TRƯỜNG THPT CHU VĂN AN' &&
+    yearAug === '2025 - 2026' &&
+    yearMar === '2024 - 2025';
+
+  results.push({
+    name: 'Tiêu đề mặc định: Tên trường dòng chấm và Năm học theo tháng hiện tại',
+    passed: test11Passed,
+    expected: 'Trường trống -> dòng chấm; Tháng 8/2025 -> 2025 - 2026; Tháng 3/2025 -> 2024 - 2025',
+    actual: test11Passed
+      ? `Chuẩn: "${schoolBlank}", Tháng 8: "${yearAug}", Tháng 3: "${yearMar}"`
+      : `Lỗi: Blank="${schoolBlank}", Aug="${yearAug}", Mar="${yearMar}"`,
+    details: 'Bỏ mặc định "THPT / THCS / TIỂU HỌC" và không cố định cứng "2024 - 2025"',
+  });
+
+  // =========================================================================
+  // TEST 12: Phát hiện lời giải tự mâu thuẫn / đổi đề (Tiêu chí 6)
+  // Các cụm: "Tuy nhiên, nếu đề bài", "giả sử đề bài", "như bản gốc",
+  // "kiểm tra lại tính toán", "không có giá trị nào", "không thỏa mãn"
+  // =========================================================================
+  const qContra1 = detectSelfContradictoryExplanation({
+    explanation: 'Ta có đạo hàm f\'(x). Tuy nhiên, nếu đề bài như bản gốc thì chọn A.',
+    correctAnswer: 'A',
+  });
+  const qContra2 = detectSelfContradictoryExplanation({
+    explanation: 'Giải phương trình suy ra không có giá trị nào của m.',
+    correctAnswer: '1',
+  });
+  const qContra3 = detectSelfContradictoryExplanation({
+    explanation: 'Do đó không thỏa mãn yêu cầu bài toán.',
+    correctAnswer: '2',
+  });
+  const qContra4 = detectSelfContradictoryExplanation({
+    explanation: 'Cần kiểm tra lại tính toán đề bài.',
+    correctAnswer: 'B',
+  });
+  const qValidSol = detectSelfContradictoryExplanation({
+    explanation: 'Phương trình có 2 nghiệm x = 2 (thỏa mãn điều kiện x > 0) và x = -1 (loại do không thỏa mãn điều kiện x > 0). Vậy có 1 giá trị.',
+    correctAnswer: '1',
+  });
+
+  const test12Passed =
+    qContra1.isContradictory &&
+    qContra2.isContradictory &&
+    qContra3.isContradictory &&
+    qContra4.isContradictory &&
+    !qValidSol.isContradictory;
+
+  results.push({
+    name: 'Tiêu chí 6: Phát hiện lời giải tự mâu thuẫn và đổi đề giữa chừng',
+    passed: test12Passed,
+    expected: 'Bắt lỗi ERROR khi có cụm đổi đề / không có giá trị nào nhưng đáp án có giá trị',
+    actual: test12Passed
+      ? 'Bắt chính xác cả 4 trường hợp mâu thuẫn và cho qua lời giải toán chuẩn'
+      : 'Kiểm tra mâu thuẫn lời giải chưa chuẩn',
+    details: 'Cảnh báo và tự sinh lại khi AI lúng túng đổi đề hoặc kết luận ngược đáp án',
+  });
+
+  // =========================================================================
+  // TEST 13: Tự giải độc lập (Tiêu chí 8) so sánh số học bằng code (sai số 10^-4)
+  // - Phân số \frac{1}{2} vs 0.5 -> khớp
+  // - Căn thức \sqrt{3} vs 1.732 -> khớp
+  // - Số giá trị nguyên: "3" vs "3" -> khớp
+  // - Lệch: "1" vs "0" -> ERROR
+  // - MCQ: "A" vs "B" -> ERROR
+  // =========================================================================
+  const compFraction = compareAnswersWithCode('\\frac{1}{2}', '0.5', 'SHORT_ANSWER');
+  const compRadical = compareAnswersWithCode('\\sqrt{3}', '1.732', 'SHORT_ANSWER');
+  const compIntCount = compareAnswersWithCode('Có 3 giá trị nguyên', '3', 'SHORT_ANSWER');
+  const compMismatchNum = compareAnswersWithCode('1', '0', 'SHORT_ANSWER');
+  const compMismatchMcq = compareAnswersWithCode('A', 'B', 'MCQ4');
+
+  const test13Passed =
+    compFraction.isMatch &&
+    compRadical.isMatch &&
+    compIntCount.isMatch &&
+    !compMismatchNum.isMatch &&
+    !compMismatchMcq.isMatch;
+
+  results.push({
+    name: 'Tiêu chí 8: Tự giải độc lập so sánh số học bằng code (|Δ| < 10^-4)',
+    passed: test13Passed,
+    expected: 'Khớp phân số, căn thức, số nguyên; bắt lỗi ERROR khi lệch đáp số hoặc khác phương án',
+    actual: test13Passed
+      ? 'So sánh số học chính xác tuyệt đối cho cả trắc nghiệm và trả lời ngắn'
+      : 'Lỗi so sánh số học Tiêu chí 8',
+    details: 'Chuẩn hóa phân số, số thập phân, căn thức bằng mathjs và đánh dấu needsReview khi lệch',
   });
 
   const passedTests = results.filter((r) => r.passed).length;

@@ -19,7 +19,8 @@ import {
 } from '../types';
 import { robustJsonParse } from '../lib/jsonParser';
 import { isValidSvg, sanitizeSvg, generateFallbackSvgDiagram } from '../lib/diagrams';
-import { renderFigureToSvg } from '../lib/figureRenderer';
+import { figureToSvg, renderFigureToSvg } from '../lib/figureRenderer';
+import { questionNeedsFigure, validateFigure, detectRequiredFigureKind } from '../lib/validate';
 
 /**
  * Tên model chính và model dự phòng
@@ -245,19 +246,20 @@ ${pedagogyInstruction}
   + 'question': Đề bài tự luận chi tiết.
   + 'scoringGuide': Hướng dẫn chấm điểm từng bước và tiêu chí đạt điểm.
 
-4. QUY ĐỊNH BẮT BUỘC VỀ HÌNH VẼ, ĐỒ THỊ VÀ BẢNG BIẾN THIÊN (Trường 'figure'):
-- Nếu câu hỏi cần hình (đồ thị, hình học, bảng biến thiên, biểu đồ) thì BẮT BUỘC trả 'figure' đầy đủ đúng cấu trúc. Tuyệt đối không viết "hình vẽ bên", "đồ thị trong hình", "bảng biến thiên bên" khi không có 'figure'.
-- Với câu kiểu "Đồ thị trong hình là đồ thị của hàm số nào":
-  + figure.functions CHỈ chứa hàm của phương án ĐÚNG.
-  + BẮT BUỘC có 'optionExprs' gồm 4 phần tử ghi biểu thức của cả 4 phương án theo cú pháp mathjs (cùng thứ tự với options A, B, C, D); các phương án nhiễu có hình dạng khác hẳn nhau.
-- Hình chỉ chứa thông tin cần thiết, không được ghi sẵn đáp án lên hình.
-- Nếu không mô tả được hình bằng các kiểu dưới đây thì BẮT BUỘC đổi sang câu hỏi thuần túy lý thuyết hoặc tính toán không cần hình.
-- Cấu trúc 'figure' thuộc một trong các kiểu sau:
-  + function-graph: {"kind": "function-graph", "functions": [{"expr": "x^3 - 3*x"}], "xRange": [-3, 3], "yRange": [-4, 4], "points": [{"x": -1, "y": 2, "label": "(-1; 2)"}], "showGrid": true}
-  + geometry: {"kind": "geometry", "points": [{"id": "S", "x": 0, "y": 3, "label": "S"}, {"id": "A", "x": -2, "y": 0, "label": "A"}, {"id": "B", "x": 2, "y": 0, "label": "B"}], "segments": [["S", "A"], ["S", "B"], ["A", "B"]], "dashed": [], "rightAngles": []}
-  + variation-table: {"kind": "variation-table", "xValues": ["-\\infty", "-1", "1", "+\\infty"], "yValues": ["-\\infty", "2", "-2", "+\\infty"], "trends": ["up", "down", "up"], "derivativeSigns": ["+", "-", "+"]}
-  + data-chart: {"kind": "data-chart", "chartType": "bar", "title": "...", "labels": ["Q1", "Q2", "Q3", "Q4"], "series": [{"name": "...", "values": [10, 20, 15, 25]}], "unit": "triệu đồng"}
-- Nếu câu hỏi không cần hình, đặt 'figure': null.
+4. QUY ĐỊNH BẮT BUỘC VỀ HÌNH VẼ, ĐỒ THỊ, BẢNG XÉT DẤU & BIẾN THIÊN:
+- Sử dụng cặp trường: 'figureKind' (enum: 'function-graph', 'variation-table', 'sign-table', 'geometry', 'data-chart', 'none') và 'figureJson' (chuỗi JSON chứa dữ liệu của hình đó).
+- CẤM viết bảng xét dấu hoặc bảng biến thiên bằng chữ thường trong câu dẫn 'question'. Bắt buộc dùng figureKind và figureJson.
+- Nếu câu dẫn chứa một trong các cụm: "hình vẽ", "hình bên", "hình dưới", "như hình", "bảng biến thiên", "bảng xét dấu", "đồ thị như", "đường cong trong hình", "biểu đồ sau" thì BẮT BUỘC phải có 'figureKind' và 'figureJson' tương ứng:
+  + Bảng xét dấu: figureKind = "sign-table", figureJson chuỗi JSON:
+    {"rowLabel": "f'(x)", "xValues": ["-\\infty", "-1", "2", "+\\infty"], "intervalSigns": ["+", "-", "+"], "pointMarks": ["0", "0"]}
+    (xValues gồm các mốc, intervalSigns gồm dấu '+' hoặc '-' ở từng khoảng, pointMarks gồm '0', '||' hoặc '' ở các mốc giữa).
+  + Bảng biến thiên: figureKind = "variation-table", figureJson chuỗi JSON:
+    {"xValues": ["-\\infty", "-1", "1", "+\\infty"], "yValues": ["-\\infty", "2", "-2", "+\\infty"], "trends": ["up", "down", "up"], "derivativeSigns": ["+", "-", "+"]}
+  + Đồ thị hàm số: figureKind = "function-graph", figureJson chuỗi JSON:
+    {"functions": [{"expr": "x^3 - 3*x"}], "xRange": [-3, 3], "yRange": [-4, 4], "studentVisibleLabels": ["A", "B"]}
+- KHÔNG LỘ ĐÁP ÁN: Tuyệt đối không đặt nhãn Max(...), Min(...), tọa độ cực trị lên hình. Không in công thức hàm số lên hình khi câu hỏi yêu cầu tìm công thức hoặc khi đây là "hàm ẩn".
+- Với câu hỏi đồ thị hàm ẩn (ví dụ: cho đồ thị hàm số f(x) rồi hỏi số cực trị của f(x^2 - 2x)): figureJson.functions chứa biểu thức để vẽ hình, câu dẫn KHÔNG in công thức; lời giải BẮT BUỘC phải dựa đúng trên tính chất hình vẽ của hàm ẩn đó.
+- Nếu câu hỏi không nhắc đến hình, BẮT BUỘC đặt: figureKind = "none", figureJson = "".
 
 5. BẮT BUỘC VỀ LỜI GIẢI:
 - Mọi câu hỏi đều phải có 'explanation' giải thích chi tiết, sư phạm, bước giải cụ thể, lý do vì sao đáp án đúng và vì sao các phương án khác sai.
@@ -283,12 +285,8 @@ ${pedagogyInstruction}
       "correctAnswer": "A",
       "explanation": "Lời giải chi tiết...",
       "scoringGuide": "Hướng dẫn chấm...",
-      "figure": {
-        "kind": "function-graph",
-        "functions": [{"expr": "x^3 - 3*x"}],
-        "xRange": [-3, 3],
-        "yRange": [-4, 4]
-      }
+      "figureKind": "function-graph",
+      "figureJson": "{\"functions\": [{\"expr\": \"x^3 - 3*x\"}], \"xRange\": [-3, 3]}"
     }
   ]
 }`;
@@ -347,14 +345,14 @@ export function normalizeQuestionFromAi(
 
   let options: string[] | undefined = undefined;
   if (isMcq) {
-    if (Array.isArray(rawItem.options) && rawItem.options.length >= 4) {
-      options = rawItem.options.slice(0, 4).map((opt: any, idx: number) => {
+    if (Array.isArray(rawItem.options)) {
+      options = rawItem.options.map((opt: any, idx: number) => {
         const letters = ['A', 'B', 'C', 'D'];
-        const text = String(opt).replace(/^[A-D]\.\s*/i, '').trim();
-        return `${letters[idx]}. ${text}`;
+        const text = String(opt ?? '').replace(/^[A-D]\.\s*/i, '').trim();
+        return idx < 4 ? `${letters[idx]}. ${text}` : text;
       });
     } else {
-      options = ['A. Phương án A', 'B. Phương án B', 'C. Phương án C', 'D. Phương án D'];
+      options = undefined;
     }
   } else if (rawItem.options && Array.isArray(rawItem.options)) {
     options = rawItem.options.map((o: any) => String(o));
@@ -385,80 +383,39 @@ export function normalizeQuestionFromAi(
   // Luôn lấy điểm từ blueprint slot, tuyệt đối KHÔNG lấy điểm do AI tự bịa
   const score = slot.score;
 
-  // Chuẩn hóa cấu trúc figure nếu AI trả về
+  // Chuẩn hóa cấu trúc figure nếu AI trả về (hỗ trợ cả cặp figureKind/figureJson và object figure)
   let figure: QuestionFigure | undefined = undefined;
-  if (rawItem.figure && typeof rawItem.figure === 'object' && rawItem.figure.kind) {
-    const k = rawItem.figure.kind;
-    if (k === 'function-graph' && Array.isArray(rawItem.figure.functions)) {
-      figure = {
-        kind: 'function-graph',
-        functions: rawItem.figure.functions.map((f: any) => ({
-          expr: String(f.expr || ''),
-          label: f.label ? String(f.label) : undefined,
-        })),
-        xRange:
-          Array.isArray(rawItem.figure.xRange) && rawItem.figure.xRange.length === 2
-            ? [Number(rawItem.figure.xRange[0]), Number(rawItem.figure.xRange[1])]
-            : [-3, 3],
-        yRange:
-          Array.isArray(rawItem.figure.yRange) && rawItem.figure.yRange.length === 2
-            ? [Number(rawItem.figure.yRange[0]), Number(rawItem.figure.yRange[1])]
-            : undefined,
-        points: Array.isArray(rawItem.figure.points)
-          ? rawItem.figure.points.map((p: any) => ({
-              x: Number(p.x),
-              y: Number(p.y),
-              label: p.label ? String(p.label) : undefined,
-            }))
-          : undefined,
-        showGrid: rawItem.figure.showGrid !== false,
-      };
-    } else if (k === 'geometry' && Array.isArray(rawItem.figure.points)) {
-      figure = {
-        kind: 'geometry',
-        points: rawItem.figure.points.map((p: any) => ({
-          id: String(p.id || ''),
-          x: Number(p.x || 0),
-          y: Number(p.y || 0),
-          label: String(p.label || p.id || ''),
-        })),
-        segments: Array.isArray(rawItem.figure.segments) ? rawItem.figure.segments : undefined,
-        dashed: Array.isArray(rawItem.figure.dashed) ? rawItem.figure.dashed : undefined,
-        circles: Array.isArray(rawItem.figure.circles) ? rawItem.figure.circles : undefined,
-        polygons: Array.isArray(rawItem.figure.polygons) ? rawItem.figure.polygons : undefined,
-        rightAngles: Array.isArray(rawItem.figure.rightAngles) ? rawItem.figure.rightAngles : undefined,
-      };
-    } else if (
-      k === 'variation-table' &&
-      Array.isArray(rawItem.figure.xValues) &&
-      Array.isArray(rawItem.figure.yValues)
-    ) {
-      figure = {
-        kind: 'variation-table',
-        xValues: rawItem.figure.xValues.map(String),
-        yValues: rawItem.figure.yValues.map(String),
-        trends: Array.isArray(rawItem.figure.trends) ? rawItem.figure.trends : ['up', 'down'],
-        derivativeSigns: Array.isArray(rawItem.figure.derivativeSigns)
-          ? rawItem.figure.derivativeSigns
-          : undefined,
-      };
-    } else if (
-      k === 'data-chart' &&
-      Array.isArray(rawItem.figure.labels) &&
-      Array.isArray(rawItem.figure.series)
-    ) {
-      figure = {
-        kind: 'data-chart',
-        chartType: rawItem.figure.chartType || 'bar',
-        title: rawItem.figure.title ? String(rawItem.figure.title) : undefined,
-        labels: rawItem.figure.labels.map(String),
-        series: rawItem.figure.series.map((s: any) => ({
-          name: String(s.name || ''),
-          values: Array.isArray(s.values) ? s.values.map(Number) : [],
-        })),
-        unit: rawItem.figure.unit ? String(rawItem.figure.unit) : undefined,
-      };
+  const rawKind = (rawItem.figureKind || rawItem.figure?.kind || 'none').trim();
+
+  let rawFigObj: any = null;
+  if (typeof rawItem.figureJson === 'string' && rawItem.figureJson.trim().length > 0) {
+    try {
+      rawFigObj = JSON.parse(rawItem.figureJson.trim());
+    } catch (parseErr: any) {
+      console.warn(`[normalizeQuestionFromAi] Lỗi JSON.parse figureJson slot ${slot.id}:`, parseErr?.message);
     }
+  } else if (rawItem.figure && typeof rawItem.figure === 'object') {
+    rawFigObj = rawItem.figure;
+  }
+
+  if (rawFigObj && rawKind && rawKind !== 'none') {
+    if (!rawFigObj.kind) rawFigObj.kind = rawKind;
+    const figValidation = validateFigure(rawKind, rawFigObj);
+    if (figValidation.isValid) {
+      figure = rawFigObj as QuestionFigure;
+    } else {
+      console.warn(`[normalizeQuestionFromAi] Figure không hợp lệ slot ${slot.id}: ${figValidation.error}`);
+      figure = undefined;
+    }
+  }
+
+  // Áp dụng quy tắc kiểm tra của validate.ts:
+  // - questionNeedsFigure(q) trả về true nếu câu dẫn chứa một trong các cụm từ yêu cầu hình
+  // - Câu không nhắc hình mà lại có figure -> bỏ figure đó (không vẽ hình thừa)
+  const questionContent = String(rawItem.question || `Câu hỏi cho chủ đề ${slot.topic}`);
+  const needsFigure = questionNeedsFigure({ question: questionContent });
+  if (!needsFigure) {
+    figure = undefined;
   }
 
   // Chuẩn hóa optionExprs
@@ -470,8 +427,8 @@ export function normalizeQuestionFromAi(
   let svgDiagram: string | undefined = undefined;
   if (figure) {
     // Tự sinh SVG trực tiếp bằng code từ figure
-    svgDiagram = renderFigureToSvg(figure);
-  } else if (typeof rawItem.svgDiagram === 'string' && rawItem.svgDiagram.trim().length > 0) {
+    svgDiagram = figureToSvg(figure);
+  } else if (typeof rawItem.svgDiagram === 'string' && rawItem.svgDiagram.trim().length > 0 && needsFigure) {
     const rawSvg = rawItem.svgDiagram.trim();
     if (isValidSvg(rawSvg)) {
       svgDiagram = sanitizeSvg(rawSvg);
@@ -657,134 +614,14 @@ export const EXAM_BATCH_RESPONSE_SCHEMA = {
           correctAnswer: { type: 'STRING', description: 'Đáp án đúng (A, B, C, D hoặc từ điền, tóm tắt)' },
           explanation: { type: 'STRING', description: 'Lời giải chi tiết từng bước' },
           scoringGuide: { type: 'STRING', description: 'Hướng dẫn chấm điểm và barem điểm' },
-          figure: {
-            type: 'OBJECT',
-            description: 'Cấu trúc hình vẽ/đồ thị/bảng biến thiên/biểu đồ nếu câu hỏi cần hình',
-            properties: {
-              kind: {
-                type: 'STRING',
-                enum: ['function-graph', 'geometry', 'variation-table', 'data-chart'],
-                description: 'Loại hình vẽ',
-              },
-              // function-graph
-              functions: {
-                type: 'ARRAY',
-                items: {
-                  type: 'OBJECT',
-                  properties: {
-                    expr: { type: 'STRING', description: 'Biểu thức hàm số theo cú pháp mathjs (ví dụ x^3 - 3*x)' },
-                    label: { type: 'STRING', description: 'Nhãn hàm số' },
-                  },
-                  required: ['expr'],
-                },
-              },
-              xRange: {
-                type: 'ARRAY',
-                items: { type: 'NUMBER' },
-                description: 'Khoảng [minX, maxX] của trục hoành',
-              },
-              yRange: {
-                type: 'ARRAY',
-                items: { type: 'NUMBER' },
-                description: 'Khoảng [minY, maxY] của trục tung',
-              },
-              points: {
-                type: 'ARRAY',
-                items: {
-                  type: 'OBJECT',
-                  properties: {
-                    id: { type: 'STRING' },
-                    x: { type: 'NUMBER' },
-                    y: { type: 'NUMBER' },
-                    label: { type: 'STRING' },
-                  },
-                },
-              },
-              showGrid: { type: 'BOOLEAN' },
-              // geometry
-              segments: {
-                type: 'ARRAY',
-                items: {
-                  type: 'ARRAY',
-                  items: { type: 'STRING' },
-                },
-              },
-              dashed: {
-                type: 'ARRAY',
-                items: {
-                  type: 'ARRAY',
-                  items: { type: 'STRING' },
-                },
-              },
-              circles: {
-                type: 'ARRAY',
-                items: {
-                  type: 'OBJECT',
-                  properties: {
-                    center: { type: 'STRING' },
-                    radius: { type: 'NUMBER' },
-                  },
-                  required: ['center', 'radius'],
-                },
-              },
-              polygons: {
-                type: 'ARRAY',
-                items: {
-                  type: 'ARRAY',
-                  items: { type: 'STRING' },
-                },
-              },
-              rightAngles: {
-                type: 'ARRAY',
-                items: {
-                  type: 'ARRAY',
-                  items: { type: 'STRING' },
-                },
-              },
-              // variation-table
-              xValues: {
-                type: 'ARRAY',
-                items: { type: 'STRING' },
-              },
-              yValues: {
-                type: 'ARRAY',
-                items: { type: 'STRING' },
-              },
-              trends: {
-                type: 'ARRAY',
-                items: { type: 'STRING' },
-              },
-              derivativeSigns: {
-                type: 'ARRAY',
-                items: { type: 'STRING' },
-              },
-              // data-chart
-              chartType: {
-                type: 'STRING',
-                enum: ['bar', 'line', 'pie'],
-              },
-              title: { type: 'STRING' },
-              labels: {
-                type: 'ARRAY',
-                items: { type: 'STRING' },
-              },
-              series: {
-                type: 'ARRAY',
-                items: {
-                  type: 'OBJECT',
-                  properties: {
-                    name: { type: 'STRING' },
-                    values: {
-                      type: 'ARRAY',
-                      items: { type: 'NUMBER' },
-                    },
-                  },
-                  required: ['name', 'values'],
-                },
-              },
-              unit: { type: 'STRING' },
-            },
-            required: ['kind'],
+          figureKind: {
+            type: 'STRING',
+            enum: ['function-graph', 'variation-table', 'sign-table', 'geometry', 'data-chart', 'none'],
+            description: 'Loại hình vẽ: function-graph, variation-table, sign-table, geometry, data-chart hoặc none',
+          },
+          figureJson: {
+            type: 'STRING',
+            description: 'Chuỗi JSON chứa đối tượng dữ liệu hình vẽ chuẩn tương ứng với figureKind, hoặc chuỗi rỗng nếu none',
           },
         },
         required: ['slotId', 'question', 'correctAnswer', 'explanation'],
@@ -1147,7 +984,8 @@ YÊU CẦU:
       "correctAnswer": "...",
       "explanation": "...",
       "scoringGuide": "...",
-      "figure": { "kind": "function-graph", "functions": [{"expr": "..."}], "xRange": [-3, 3] }
+      "figureKind": "none",
+      "figureJson": ""
     }
   ]
 }`;
@@ -1277,7 +1115,7 @@ YÊU CẦU CHUYỂN ĐỔI:
       type: qType,
       level: item.level || 'NB',
       question: item.question || '',
-      options: item.options || (qType === 'MCQ4' ? ['A. ', 'B. ', 'C. ', 'D. '] : undefined),
+      options: item.options,
       statements: item.statements,
       pairs: item.pairs,
       correctAnswer: item.correctAnswer || (qType === 'MCQ4' ? 'A' : ''),
@@ -1359,7 +1197,9 @@ YÊU CẦU:
 1. Hãy biên soạn lại câu hỏi này một cách cẩn thận, khắc phục triệt để các lỗi và vấn đề nêu trên.
 2. Đảm bảo đúng chuẩn kiến thức GDPT 2018, bám sát môn ${config.subject} lớp ${config.grade}.
 3. Nếu là trắc nghiệm MCQ4: đủ 4 phương án, 1 đáp án duy nhất đúng, các phương án nhiễu cùng kiểu dữ liệu.
-4. Lời giải (explanation) chi tiết, chính xác từng bước, giải thích vì sao chọn đáp án đó.
+4. NGUYÊN TẮC LỜI GIẢI VÀ ĐÁP ÁN:
+   - Giải trọn vẹn đúng đề đã cho, tuyệt đối KHÔNG tự ý đổi đề trong lời giải (CẤM các cụm "Tuy nhiên, nếu đề bài", "giả sử đề bài", "như bản gốc", "kiểm tra lại tính toán").
+   - Kết luận cuối cùng của lời giải PHẢI TRÙNG KHỚP TUYỆT ĐỐI với correctAnswer (ví dụ: nếu đề hỏi số giá trị nguyên của tham số m và kết luận có 1 giá trị thì correctAnswer phải là 1 hoặc phương án tương ứng, không được kết luận "không có giá trị nào" khi đáp án chọn phương án khác).
 5. Định dạng JSON trả về:
 {
   "questions": [
@@ -1373,7 +1213,8 @@ YÊU CẦU:
       "correctAnswer": "A",
       "explanation": "Lời giải chi tiết đầy đủ...",
       "scoringGuide": "Hướng dẫn chấm...",
-      "figure": { "kind": "function-graph", "functions": [{"expr": "..."}], "xRange": [-3, 3] }
+      "figureKind": "none",
+      "figureJson": ""
     }
   ]
 }`;
