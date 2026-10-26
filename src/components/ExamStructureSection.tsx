@@ -921,32 +921,108 @@ export const ExamStructureSection: React.FC = () => {
                 </span>
               </div>
 
-              <div className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2">
+              <div className="max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {slots.map((slot) => {
                     const currentScore = slotScores[slot.id] ?? slot.score;
+                    const isFigureNeeded =
+                      config.customSlotFigures?.[slot.id] !== undefined
+                        ? config.customSlotFigures[slot.id]
+                        : Boolean(slot.needsFigure);
+
                     return (
                       <div
                         key={slot.id}
-                        className="p-1.5 rounded border border-slate-200 bg-slate-50 flex items-center justify-between gap-1 text-[11px]"
+                        className="p-1.5 rounded border border-slate-200 bg-slate-50 flex flex-col gap-1 text-[11px]"
                       >
-                        <span className="font-medium text-slate-700 truncate">
-                          Câu {slot.orderNumber} ({slot.level}):
-                        </span>
-                        <input
-                          type="number"
-                          step={config.roundingStep || 0.25}
-                          min={0}
-                          value={currentScore}
-                          onChange={(e) =>
-                            handleCustomScoreChange(slot.id, parseFloat(e.target.value))
-                          }
-                          className="w-14 px-1 py-0.5 text-center font-bold bg-white border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="font-medium text-slate-700 truncate" title={`Câu ${slot.orderNumber} - ${slot.topic}`}>
+                            Câu {slot.orderNumber} ({slot.level}):
+                          </span>
+                          <input
+                            type="number"
+                            step={config.roundingStep || 0.25}
+                            min={0}
+                            value={currentScore}
+                            onChange={(e) =>
+                              handleCustomScoreChange(slot.id, parseFloat(e.target.value))
+                            }
+                            className="w-13 px-1 py-0.5 text-center font-bold bg-white border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                        </div>
+
+                        {/* Ô tích "Câu này cần hình" để giáo viên bắt buộc thủ công */}
+                        <label
+                          className="inline-flex items-center gap-1.5 cursor-pointer text-[10px] select-none pt-0.5 border-t border-slate-200/70"
+                          title="Đánh dấu câu này bắt buộc phải có hình vẽ / đồ thị / bảng"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isFigureNeeded}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              updateConfig({
+                                customSlotFigures: {
+                                  ...(config.customSlotFigures || {}),
+                                  [slot.id]: checked,
+                                },
+                              });
+                            }}
+                            className="w-3.5 h-3.5 rounded text-blue-600 focus:ring-blue-500 border-slate-300"
+                          />
+                          <span className={isFigureNeeded ? 'font-bold text-blue-700' : 'text-slate-500'}>
+                            {isFigureNeeded ? '🖼️ Cần hình' : 'Câu này cần hình'}
+                          </span>
+                        </label>
                       </div>
                     );
                   })}
                 </div>
+              </div>
+
+              {/* Công tắc Ưu tiên mẫu của code cho câu có hình (mặc định BẬT cho Toán) */}
+              <div className="p-3 bg-white rounded-lg border border-slate-200 mt-2">
+                <label className="flex items-start justify-between gap-3 cursor-pointer">
+                  <div>
+                    <span className="font-semibold text-slate-800 text-xs flex items-center gap-1.5">
+                      <span className="text-emerald-600 font-bold">⚡</span>
+                      Ưu tiên mẫu của code cho câu có hình
+                    </span>
+                    <span className="text-[11px] text-slate-500 block leading-relaxed mt-0.5">
+                      Dựng câu hỏi Toán có đồ thị, bảng biến thiên bằng code thuần (chính xác tuyệt đối 100%, không bịa dữ kiện, nghiệm nguyên, hình vẽ chuẩn THPT). Mặc định BẬT cho môn Toán.
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={config.preferCodeTemplatesForFigures !== false}
+                    onChange={(e) =>
+                      updateConfig({ preferCodeTemplatesForFigures: e.target.checked })
+                    }
+                    className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 mt-0.5 shrink-0"
+                  />
+                </label>
+              </div>
+
+              {/* Công tắc Cho phép đổi sang câu không cần hình (mặc định TẮT) */}
+              <div className="p-3 bg-white rounded-lg border border-slate-200 mt-2">
+                <label className="flex items-start justify-between gap-3 cursor-pointer">
+                  <div>
+                    <span className="font-semibold text-slate-800 text-xs block">
+                      Cho phép đổi sang câu không cần hình
+                    </span>
+                    <span className="text-[11px] text-slate-500 block leading-relaxed mt-0.5">
+                      Nếu AI không thể sinh hoặc tự sửa được hình vẽ sau 3 lần thử, cho phép đổi sang câu hỏi lý thuyết / tính toán không cần hình. (Mặc định TẮT: giữ câu và gắn nhãn "Cần GV xem lại hình")
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(config.allowFallbackToNoFigure)}
+                    onChange={(e) =>
+                      updateConfig({ allowFallbackToNoFigure: e.target.checked })
+                    }
+                    className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 mt-0.5 shrink-0"
+                  />
+                </label>
               </div>
             </div>
           )}

@@ -7,9 +7,15 @@
  * 4. Thuật toán tự điền ma trận câu hỏi x mức độ.
  */
 
-import { convertPercentagesToCounts, autoFillBlueprintMatrix, validateBlueprintMatrix } from './blueprint';
+import {
+  convertPercentagesToCounts,
+  autoFillBlueprintMatrix,
+  validateBlueprintMatrix,
+  inferSlotFigureNeed,
+} from './blueprint';
+import { getDynamicFigureSample } from '../services/gemini';
 import { allocateIntegerScores, calculateCluster4ProgressiveScore, validateTotalExamScore } from './scoring';
-import { figureToSvg } from './figureRenderer';
+import { figureToSvg, formatMathSymbolsForSvg } from './figureRenderer';
 import {
   runCodeQualityCheck,
   getFaultyQuestions,
@@ -19,6 +25,7 @@ import {
 import { getDefaultAcademicYear, formatSchoolNameForHeader } from '../config';
 import { compareAnswersWithCode, parseMathNumber } from '../services/quality';
 import { Question, QuestionFigure } from '../types';
+import { testMathFigureTemplates } from './mathFigureTemplates';
 
 export interface TestCaseResult {
   name: string;
@@ -459,6 +466,143 @@ export function selfTest(): SelfTestReport {
       ? 'So sánh số học chính xác tuyệt đối cho cả trắc nghiệm và trả lời ngắn'
       : 'Lỗi so sánh số học Tiêu chí 8',
     details: 'Chuẩn hóa phân số, số thập phân, căn thức bằng mathjs và đánh dấu needsReview khi lệch',
+  });
+
+  // =========================================================================
+  // TEST 14: Kiểm thử nâng cấp figureRenderer
+  // (a) SVG bảng biến thiên chứa định nghĩa marker của chính nó (fig-arrow-v)
+  // (b) Đồ thị không yRange tự đo và nằm trọn trong khung (clipPath fig-plot-clip)
+  // (c) Nhãn chứa chữ < và & được thoát XML an toàn
+  // (d) \frac{1}{2} hiển thị 1/2
+  // =========================================================================
+  // (a) Bảng biến thiên có marker riêng
+  const vtTestFig: QuestionFigure = {
+    kind: 'variation-table',
+    xValues: ['-\\infty', '0', '+\\infty'],
+    yValues: ['-\\infty', '1', '-\\infty'],
+    trends: ['up', 'down'],
+    derivativeSigns: ['+', '-'],
+  };
+  const vtSvg = figureToSvg(vtTestFig);
+  const test14aPassed = vtSvg.includes('<defs>') && vtSvg.includes('id="fig-arrow-v"');
+
+  // (b) Đồ thị không yRange tự đo và có clipPath
+  const graphTestNoY: QuestionFigure = {
+    kind: 'function-graph',
+    functions: [{ expr: 'x^2 - 1' }],
+    xRange: [-3, 3],
+  };
+  const graphSvg = figureToSvg(graphTestNoY);
+  const test14bPassed =
+    graphSvg.includes('clip-path="url(#fig-plot-clip)"') &&
+    graphSvg.includes('id="fig-arrow-g"') &&
+    !graphSvg.includes('Hình vẽ gặp lỗi');
+
+  // (c) Nhãn chứa chữ < và & không làm SVG lỗi
+  const geomTestXml: QuestionFigure = {
+    kind: 'geometry',
+    points: [
+      { id: 'p1', x: 0, y: 0, label: 'A & B' },
+      { id: 'p2', x: 3, y: 3, label: 'x < 3' },
+    ],
+  };
+  const geomSvg = figureToSvg(geomTestXml);
+  const test14cPassed =
+    geomSvg.includes('A &amp; B') &&
+    geomSvg.includes('x &lt; 3') &&
+    !geomSvg.includes('A & B') &&
+    !geomSvg.includes('x < 3');
+
+  // (d) \frac{1}{2} hiển thị 1/2
+  const fracResult = formatMathSymbolsForSvg('\\frac{1}{2}');
+  const test14dPassed = fracResult === '1/2';
+
+  const test14Passed = test14aPassed && test14bPassed && test14cPassed && test14dPassed;
+
+  results.push({
+    name: 'Nâng cấp figureRenderer: Marker riêng, auto yRange & clipPath, thoát XML, định dạng phân số',
+    passed: test14Passed,
+    expected: '(a) Marker fig-arrow-v riêng, (b) Tự đo yRange & clipPath, (c) Thoát & và < an toàn, (d) \\frac{1}{2} thành 1/2',
+    actual: test14Passed
+      ? `Đạt cả 4 yêu cầu: Marker riêng=${test14aPassed}, Auto yRange=${test14bPassed}, XML safe=${test14cPassed}, Phân số=${fracResult}`
+      : `Chưa đạt: Marker=${test14aPassed}, NoYRange=${test14bPassed}, XmlSafe=${test14cPassed}, Frac="${fracResult}"`,
+    details: 'Đảm bảo mỗi SVG tự chứa marker, không tràn ra ngoài khung và hiển thị ký hiệu toán học chính xác',
+  });
+
+  // =========================================================================
+  // TEST 15: Tự động phát hiện slot cần hình và sinh mẫu dynamic figure
+  // =========================================================================
+  const slotGraph = inferSlotFigureNeed({ topic: 'Khảo sát sự biến thiên và vẽ đồ thị hàm số bậc 3' });
+  const slotVariation = inferSlotFigureNeed({ topic: 'Đọc bảng biến thiên của hàm số' });
+  const slotSign = inferSlotFigureNeed({ topic: 'Xét dấu tam thức bậc hai và bảng xét dấu' });
+  const slotGeometry = inferSlotFigureNeed({ topic: 'Thể tích khối chóp và hình lăng trụ đứng' });
+  const slotChart = inferSlotFigureNeed({ topic: 'Đọc biểu đồ tần số và bảng phân bố' });
+  const slotPureMath = inferSlotFigureNeed({ topic: 'Giải phương trình vô tỉ chứa căn thức' });
+
+  const dynamicFigSampleNeedsFig = getDynamicFigureSample({
+    id: 's1',
+    orderNumber: 1,
+    questionType: 'MCQ4',
+    level: 'NB',
+    topic: 'Đồ thị',
+    score: 0.25,
+    needsFigure: true,
+    figureKinds: ['function-graph'],
+  });
+
+  const dynamicFigSampleNoFig = getDynamicFigureSample({
+    id: 's2',
+    orderNumber: 2,
+    questionType: 'MCQ4',
+    level: 'NB',
+    topic: 'Tính toán',
+    score: 0.25,
+    needsFigure: false,
+  });
+
+  const test15Passed =
+    slotGraph.needsFigure &&
+    slotGraph.figureKinds?.includes('function-graph') &&
+    slotVariation.needsFigure &&
+    slotVariation.figureKinds?.includes('variation-table') &&
+    slotSign.needsFigure &&
+    slotSign.figureKinds?.includes('sign-table') &&
+    slotGeometry.needsFigure &&
+    slotGeometry.figureKinds?.includes('geometry') &&
+    slotChart.needsFigure &&
+    slotChart.figureKinds?.includes('data-chart') &&
+    !slotPureMath.needsFigure &&
+    dynamicFigSampleNeedsFig.includes('"figure"') &&
+    dynamicFigSampleNoFig === '';
+
+  results.push({
+    name: 'Suy luận nhu cầu hình vẽ từ từ khóa (inferSlotFigureNeed) và Dynamic Figure JSON Prompt',
+    passed: Boolean(test15Passed),
+    expected: 'Suy ra đúng 5 loại hình từ từ khóa; không có từ khóa -> false; prompt mẫu figure động',
+    actual: test15Passed
+      ? 'Đạt: Nhận diện chính xác 5/5 loại hình và loại trừ câu không hình; dynamic prompt chuẩn'
+      : `Chưa đạt: Graph=${slotGraph.needsFigure}, Geom=${slotGeometry.needsFigure}, Pure=${slotPureMath.needsFigure}`,
+    details: 'Đảm bảo tự động đánh dấu needsFigure và phân loại figureKinds chính xác từ chủ đề',
+  });
+
+  // =========================================================================
+  // TEST 16: Dựng câu hỏi Toán có hình bằng Code thuần (mathFigureTemplates)
+  // 3 mẫu chạy 30 lần với seed khác nhau:
+  // (a) đúng 1 phương án trùng khớp;
+  // (b) hệ số nguyên;
+  // (c) vượt qua validateFigure;
+  // (d) đáp số khớp bảng biến thiên / đồ thị;
+  // (e) số ý đúng khớp với target (1 đến 4).
+  // =========================================================================
+  const templateTestReport = testMathFigureTemplates();
+  results.push({
+    name: 'Dựng câu hỏi Toán có hình bằng Code thuần (Mẫu 1, 2, 3 - 90 lần chạy seeded)',
+    passed: templateTestReport.allPassed,
+    expected: '90/90 lượt kiểm tra đạt: 1 phương án đúng, hệ số nguyên, validateFigure hợp lệ, 1-4 ý đúng cho True/False',
+    actual: templateTestReport.allPassed
+      ? `Đạt: ${templateTestReport.passedChecks}/${templateTestReport.totalChecks} lượt kiểm thử hoàn toàn chuẩn xác`
+      : `Thất bại ${templateTestReport.failures.length} trường hợp: ${templateTestReport.failures.slice(0, 3).join('; ')}`,
+    details: 'Kiểm thử 3 mẫu câu hỏi Toán (nhận dạng đồ thị, đọc bảng biến thiên, đúng/sai) với 30 seed khác nhau mỗi mẫu',
   });
 
   const passedTests = results.filter((r) => r.passed).length;

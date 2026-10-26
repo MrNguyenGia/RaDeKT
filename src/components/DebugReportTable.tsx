@@ -47,8 +47,17 @@ interface FigureInspectionResult {
 function inspectQuestionFigure(
   figure?: QuestionFigure,
   svgDiagram?: string,
-  imageData?: QuestionImageData
+  imageData?: QuestionImageData,
+  rawParseError?: string
 ): FigureInspectionResult {
+  if (rawParseError) {
+    return {
+      kind: figure?.kind || 'Lỗi parse',
+      status: 'ERROR',
+      detail: `Lỗi parse dữ liệu hình: ${rawParseError}`,
+    };
+  }
+
   if (imageData?.dataUrl) {
     return {
       kind: 'Ảnh GV chèn',
@@ -159,7 +168,7 @@ export const DebugReportTable: React.FC<DebugReportTableProps> = ({ isOpen, onCl
 
     return currentExam.questions.map((q, idx) => {
       const mentionsFigure = questionNeedsFigure(q);
-      const figInspection = inspectQuestionFigure(q.figure, q.svgDiagram, q.imageData);
+      const figInspection = inspectQuestionFigure(q.figure, q.svgDiagram, q.imageData, q.rawParseError);
       const optionsText = getValidOptionsText(q);
       const qIssues = allIssues.filter((i) => i.questionId === q.id);
       const regCount = q.regenerationCount || 0;
@@ -465,7 +474,12 @@ export const DebugReportTable: React.FC<DebugReportTableProps> = ({ isOpen, onCl
 
                         {/* 2. slotId */}
                         <td className="py-2.5 px-3 font-mono text-[11px] text-slate-300">
-                          {row.slotId}
+                          <div>{row.slotId}</div>
+                          {row.questionObj.source === 'template' && (
+                            <span className="inline-block mt-0.5 px-1.5 py-0.5 bg-emerald-950/80 text-emerald-300 border border-emerald-600/50 rounded text-[9px] font-sans font-medium">
+                              Code template
+                            </span>
+                          )}
                         </td>
 
                         {/* 3. Dạng */}

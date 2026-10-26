@@ -182,6 +182,9 @@ export interface ExamConfig {
   sectionScoringEnabled?: boolean; // Tùy chọn nhập điểm theo phần (Trắc nghiệm / Tự luận)
   sectionScores?: { objectiveScore?: number; essayScore?: number }; // Điểm từng phần
   customSlotScores?: Record<string, number>; // Điểm tùy chỉnh theo ô câu hỏi
+  customSlotFigures?: Record<string, boolean>; // Giáo viên chỉ định bắt buộc/bỏ hình cho từng slot
+  allowFallbackToNoFigure?: boolean; // Cho phép đổi sang câu không cần hình khi AI không sinh được hình (mặc định tắt)
+  preferCodeTemplatesForFigures?: boolean; // Ưu tiên mẫu của code cho câu có hình (mặc định BẬT cho môn Toán)
 
   numberOfVersions: number; // Số mã đề cần sinh (vd: 1, 2, 4)
   curriculum?: 'CANH_DIEU' | 'KET_NOI' | 'CHAN_TROI' | 'CUSTOM'; // Bộ sách giáo khoa
@@ -236,6 +239,8 @@ export interface BlueprintSlot {
   learningOutcome?: string;
   score: number;
   orderNumber: number;
+  needsFigure?: boolean;
+  figureKinds?: string[];
 }
 
 export type FunctionGraphFigure = {
@@ -320,6 +325,7 @@ export interface Question {
   needsReview: boolean; // Cần giáo viên rà soát lại (true/false)
   reviewNote?: string; // Ghi chú cảnh báo/lưu ý cho giáo viên
   isTeacherWritten: boolean; // Do giáo viên tự viết hay AI sinh ra
+  source?: 'ai' | 'template' | 'teacher' | 'AI' | 'GV'; // Nguồn sinh câu: AI, mẫu code thuần (template), hoặc giáo viên
   figure?: QuestionFigure; // Cấu trúc dữ liệu hình vẽ chuẩn để sinh SVG bằng code
   figureKind?: string; // Loại figure nếu AI trả về qua cặp figureKind/figureJson
   figureJson?: string; // Chuỗi JSON thô của figure

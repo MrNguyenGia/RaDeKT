@@ -303,6 +303,8 @@ export const DEFAULT_EXAM_CONFIG: ExamConfig = {
   sectionScoringEnabled: false,
   sectionScores: { objectiveScore: 7, essayScore: 3 },
   customSlotScores: {},
+  allowFallbackToNoFigure: false,
+  preferCodeTemplatesForFigures: true,
   numberOfVersions: 2,
   curriculum: 'KET_NOI',
   questionCountsByType: {

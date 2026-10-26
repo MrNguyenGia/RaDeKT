@@ -21,6 +21,8 @@ import { robustJsonParse } from '../lib/jsonParser';
 import { isValidSvg, sanitizeSvg, generateFallbackSvgDiagram } from '../lib/diagrams';
 import { figureToSvg, renderFigureToSvg } from '../lib/figureRenderer';
 import { questionNeedsFigure, validateFigure, detectRequiredFigureKind } from '../lib/validate';
+import { compile } from 'mathjs';
+import { pickMathTemplate } from '../lib/mathFigureTemplates';
 
 /**
  * Tên model chính và model dự phòng
@@ -247,19 +249,60 @@ ${pedagogyInstruction}
   + 'scoringGuide': Hướng dẫn chấm điểm từng bước và tiêu chí đạt điểm.
 
 4. QUY ĐỊNH BẮT BUỘC VỀ HÌNH VẼ, ĐỒ THỊ, BẢNG XÉT DẤU & BIẾN THIÊN:
-- Sử dụng cặp trường: 'figureKind' (enum: 'function-graph', 'variation-table', 'sign-table', 'geometry', 'data-chart', 'none') và 'figureJson' (chuỗi JSON chứa dữ liệu của hình đó).
-- CẤM viết bảng xét dấu hoặc bảng biến thiên bằng chữ thường trong câu dẫn 'question'. Bắt buộc dùng figureKind và figureJson.
-- Nếu câu dẫn chứa một trong các cụm: "hình vẽ", "hình bên", "hình dưới", "như hình", "bảng biến thiên", "bảng xét dấu", "đồ thị như", "đường cong trong hình", "biểu đồ sau" thì BẮT BUỘC phải có 'figureKind' và 'figureJson' tương ứng:
-  + Bảng xét dấu: figureKind = "sign-table", figureJson chuỗi JSON:
-    {"rowLabel": "f'(x)", "xValues": ["-\\infty", "-1", "2", "+\\infty"], "intervalSigns": ["+", "-", "+"], "pointMarks": ["0", "0"]}
-    (xValues gồm các mốc, intervalSigns gồm dấu '+' hoặc '-' ở từng khoảng, pointMarks gồm '0', '||' hoặc '' ở các mốc giữa).
-  + Bảng biến thiên: figureKind = "variation-table", figureJson chuỗi JSON:
-    {"xValues": ["-\\infty", "-1", "1", "+\\infty"], "yValues": ["-\\infty", "2", "-2", "+\\infty"], "trends": ["up", "down", "up"], "derivativeSigns": ["+", "-", "+"]}
-  + Đồ thị hàm số: figureKind = "function-graph", figureJson chuỗi JSON:
-    {"functions": [{"expr": "x^3 - 3*x"}], "xRange": [-3, 3], "yRange": [-4, 4], "studentVisibleLabels": ["A", "B"]}
+- Sử dụng đối tượng 'figure' trực tiếp (hỗ trợ cả cặp 'figureKind' và 'figureJson' dự phòng). Ưu tiên trả về đối tượng 'figure' trực tiếp.
+- BẠN KHÔNG VẼ HÌNH, CHỈ ĐƯA DỮ LIỆU. Mọi dữ kiện trong đề, đáp án và lời giải phải suy ra được từ chính dữ liệu hình.
+- CẤM viết bảng xét dấu hoặc bảng biến thiên bằng chữ thường trong câu dẫn 'question'. Bắt buộc dùng đối tượng 'figure'.
+- Nếu slot có needsFigure=true, hoặc câu dẫn chứa một trong các cụm: "hình vẽ", "hình bên", "hình dưới", "như hình", "bảng biến thiên", "bảng xét dấu", "đồ thị như", "đường cong trong hình", "biểu đồ sau" thì BẮT BUỘC phải có đối tượng 'figure' hợp lệ thuộc một trong 5 loại:
+  a) Đồ thị hàm số (function-graph):
+     "figure": {
+       "kind": "function-graph",
+       "functions": [{"expr": "x^3 - 3*x", "label": "y = f(x)"}],
+       "xRange": [-3, 3],
+       "yRange": [-4, 4],
+       "points": [{"x": -1, "y": 2, "label": "A", "isExtremum": true}, {"x": 1, "y": -2, "label": "B", "isExtremum": true}],
+       "studentVisibleLabels": ["A", "B"]
+     }
+  b) Bảng biến thiên (variation-table):
+     "figure": {
+       "kind": "variation-table",
+       "xValues": ["-\\infty", "-1", "1", "+\\infty"],
+       "yValues": ["-\\infty", "2", "-2", "+\\infty"],
+       "trends": ["up", "down", "up"],
+       "derivativeSigns": ["+", "-", "+"]
+     }
+  c) Bảng xét dấu (sign-table):
+     "figure": {
+       "kind": "sign-table",
+       "rowLabel": "f'(x)",
+       "xValues": ["-\\infty", "-1", "2", "+\\infty"],
+       "intervalSigns": ["+", "-", "+"],
+       "pointMarks": ["0", "0"]
+     }
+  d) Hình học không gian & phẳng (geometry) - ví dụ hình chóp S.ABC:
+     "figure": {
+       "kind": "geometry",
+       "points": [
+         {"id": "S", "x": 160, "y": 30, "label": "S"},
+         {"id": "A", "x": 70, "y": 150, "label": "A"},
+         {"id": "B", "x": 150, "y": 180, "label": "B"},
+         {"id": "C", "x": 250, "y": 170, "label": "C"}
+       ],
+       "segments": [["S","A"], ["S","B"], ["S","C"], ["A","B"], ["B","C"]],
+       "dashed": [["A","C"]],
+       "rightAngles": [["S","A","B"]]
+     }
+  e) Biểu đồ thống kê (data-chart):
+     "figure": {
+       "kind": "data-chart",
+       "chartType": "bar",
+       "title": "Số lượng học sinh giỏi các lớp",
+       "labels": ["Lớp 10A", "Lớp 10B", "Lớp 10C"],
+       "series": [{"name": "Số học sinh Giỏi", "values": [12, 15, 10]}],
+       "unit": "học sinh"
+     }
 - KHÔNG LỘ ĐÁP ÁN: Tuyệt đối không đặt nhãn Max(...), Min(...), tọa độ cực trị lên hình. Không in công thức hàm số lên hình khi câu hỏi yêu cầu tìm công thức hoặc khi đây là "hàm ẩn".
-- Với câu hỏi đồ thị hàm ẩn (ví dụ: cho đồ thị hàm số f(x) rồi hỏi số cực trị của f(x^2 - 2x)): figureJson.functions chứa biểu thức để vẽ hình, câu dẫn KHÔNG in công thức; lời giải BẮT BUỘC phải dựa đúng trên tính chất hình vẽ của hàm ẩn đó.
-- Nếu câu hỏi không nhắc đến hình, BẮT BUỘC đặt: figureKind = "none", figureJson = "".
+- Với câu hỏi đồ thị hàm ẩn (ví dụ: cho đồ thị hàm số f(x) rồi hỏi số cực trị của f(x^2 - 2x)): figure.functions chứa biểu thức để vẽ hình, câu dẫn KHÔNG in công thức; lời giải BẮT BUỘC phải dựa đúng trên tính chất hình vẽ của hàm ẩn đó.
+- Slot có needsFigure=false TUYỆT ĐỐI không nhắc tới hình trong câu dẫn và không đưa trường 'figure' vào.
 
 5. BẮT BUỘC VỀ LỜI GIẢI:
 - Mọi câu hỏi đều phải có 'explanation' giải thích chi tiết, sư phạm, bước giải cụ thể, lý do vì sao đáp án đúng và vì sao các phương án khác sai.
@@ -285,8 +328,12 @@ ${pedagogyInstruction}
       "correctAnswer": "A",
       "explanation": "Lời giải chi tiết...",
       "scoringGuide": "Hướng dẫn chấm...",
-      "figureKind": "function-graph",
-      "figureJson": "{\"functions\": [{\"expr\": \"x^3 - 3*x\"}], \"xRange\": [-3, 3]}"
+      "figure": {
+        "kind": "function-graph",
+        "functions": [{"expr": "x^3 - 3*x"}],
+        "xRange": [-3, 3],
+        "yRange": [-4, 4]
+      }
     }
   ]
 }`;
@@ -383,20 +430,24 @@ export function normalizeQuestionFromAi(
   // Luôn lấy điểm từ blueprint slot, tuyệt đối KHÔNG lấy điểm do AI tự bịa
   const score = slot.score;
 
-  // Chuẩn hóa cấu trúc figure nếu AI trả về (hỗ trợ cả cặp figureKind/figureJson và object figure)
+  // Chuẩn hóa cấu trúc figure nếu AI trả về (ưu tiên object figure trước, rồi mới tới figureJson)
   let figure: QuestionFigure | undefined = undefined;
-  const rawKind = (rawItem.figureKind || rawItem.figure?.kind || 'none').trim();
-
+  let rawParseError: string | undefined = undefined;
   let rawFigObj: any = null;
-  if (typeof rawItem.figureJson === 'string' && rawItem.figureJson.trim().length > 0) {
+
+  if (rawItem.figure && typeof rawItem.figure === 'object' && Object.keys(rawItem.figure).length > 0) {
+    rawFigObj = rawItem.figure;
+  } else if (typeof rawItem.figureJson === 'string' && rawItem.figureJson.trim().length > 0) {
     try {
       rawFigObj = JSON.parse(rawItem.figureJson.trim());
     } catch (parseErr: any) {
-      console.warn(`[normalizeQuestionFromAi] Lỗi JSON.parse figureJson slot ${slot.id}:`, parseErr?.message);
+      const errMsg = `Lỗi JSON.parse figureJson: ${parseErr?.message || String(parseErr)}`;
+      rawParseError = errMsg;
+      console.warn(`[normalizeQuestionFromAi] ${errMsg} slot ${slot.id}`);
     }
-  } else if (rawItem.figure && typeof rawItem.figure === 'object') {
-    rawFigObj = rawItem.figure;
   }
+
+  const rawKind = (rawFigObj?.kind || rawItem.figureKind || 'none').trim();
 
   if (rawFigObj && rawKind && rawKind !== 'none') {
     if (!rawFigObj.kind) rawFigObj.kind = rawKind;
@@ -404,17 +455,20 @@ export function normalizeQuestionFromAi(
     if (figValidation.isValid) {
       figure = rawFigObj as QuestionFigure;
     } else {
+      const errMsg = `Figure không hợp lệ: ${figValidation.error}`;
+      rawParseError = rawParseError ? `${rawParseError}; ${errMsg}` : errMsg;
       console.warn(`[normalizeQuestionFromAi] Figure không hợp lệ slot ${slot.id}: ${figValidation.error}`);
       figure = undefined;
     }
   }
 
   // Áp dụng quy tắc kiểm tra của validate.ts:
-  // - questionNeedsFigure(q) trả về true nếu câu dẫn chứa một trong các cụm từ yêu cầu hình
-  // - Câu không nhắc hình mà lại có figure -> bỏ figure đó (không vẽ hình thừa)
+  // - questionNeedsFigure(q) hoặc slot.needsFigure
+  // - Câu không nhắc hình và slot không cần hình mà lại có figure -> bỏ figure đó (không vẽ hình thừa)
   const questionContent = String(rawItem.question || `Câu hỏi cho chủ đề ${slot.topic}`);
-  const needsFigure = questionNeedsFigure({ question: questionContent });
-  if (!needsFigure) {
+  const mentionsFigure = questionNeedsFigure({ question: questionContent });
+  const isFigureNeeded = Boolean(slot.needsFigure || mentionsFigure);
+  if (!isFigureNeeded) {
     figure = undefined;
   }
 
@@ -428,7 +482,7 @@ export function normalizeQuestionFromAi(
   if (figure) {
     // Tự sinh SVG trực tiếp bằng code từ figure
     svgDiagram = figureToSvg(figure);
-  } else if (typeof rawItem.svgDiagram === 'string' && rawItem.svgDiagram.trim().length > 0 && needsFigure) {
+  } else if (typeof rawItem.svgDiagram === 'string' && rawItem.svgDiagram.trim().length > 0 && isFigureNeeded) {
     const rawSvg = rawItem.svgDiagram.trim();
     if (isValidSvg(rawSvg)) {
       svgDiagram = sanitizeSvg(rawSvg);
@@ -457,7 +511,7 @@ export function normalizeQuestionFromAi(
     figure,
     svgDiagram,
     rawAiResponse: rawItem,
-    rawParseError: undefined,
+    rawParseError,
     regenerationCount: typeof rawItem?.regenerationCount === 'number' ? rawItem.regenerationCount : 0,
   };
 }
@@ -561,6 +615,144 @@ export async function callGeminiJsonApi(
 }
 
 /**
+ * Cấu trúc figure dạng OBJECT trực tiếp (không lồng JSON trong chuỗi)
+ */
+export const FIGURE_OBJECT_SCHEMA = {
+  type: 'OBJECT',
+  description: 'Dữ liệu hình vẽ chuẩn (Object trực tiếp, không lồng chuỗi JSON)',
+  properties: {
+    kind: {
+      type: 'STRING',
+      enum: ['function-graph', 'variation-table', 'sign-table', 'geometry', 'data-chart'],
+      description: 'Loại hình vẽ: function-graph, variation-table, sign-table, geometry, data-chart',
+    },
+    // Cho function-graph
+    functions: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          expr: { type: 'STRING', description: 'Biểu thức mathjs, ví dụ x^3 - 3*x' },
+          label: { type: 'STRING' },
+        },
+        required: ['expr'],
+      },
+    },
+    xRange: {
+      type: 'ARRAY',
+      items: { type: 'NUMBER' },
+      description: 'Khoảng [minX, maxX]',
+    },
+    yRange: {
+      type: 'ARRAY',
+      items: { type: 'NUMBER' },
+      description: 'Khoảng [minY, maxY]',
+    },
+    points: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          id: { type: 'STRING' },
+          x: { type: 'NUMBER' },
+          y: { type: 'NUMBER' },
+          label: { type: 'STRING' },
+          isExtremum: { type: 'BOOLEAN' },
+        },
+      },
+    },
+    studentVisibleLabels: {
+      type: 'ARRAY',
+      items: { type: 'STRING' },
+    },
+    // Cho variation-table
+    xValues: {
+      type: 'ARRAY',
+      items: { type: 'STRING' },
+    },
+    yValues: {
+      type: 'ARRAY',
+      items: { type: 'STRING' },
+    },
+    trends: {
+      type: 'ARRAY',
+      items: { type: 'STRING', enum: ['up', 'down'] },
+    },
+    derivativeSigns: {
+      type: 'ARRAY',
+      items: { type: 'STRING' },
+    },
+    // Cho sign-table
+    rowLabel: {
+      type: 'STRING',
+    },
+    intervalSigns: {
+      type: 'ARRAY',
+      items: { type: 'STRING' },
+    },
+    pointMarks: {
+      type: 'ARRAY',
+      items: { type: 'STRING' },
+    },
+    // Cho geometry
+    segments: {
+      type: 'ARRAY',
+      items: {
+        type: 'ARRAY',
+        items: { type: 'STRING' },
+      },
+    },
+    dashed: {
+      type: 'ARRAY',
+      items: {
+        type: 'ARRAY',
+        items: { type: 'STRING' },
+      },
+    },
+    polygons: {
+      type: 'ARRAY',
+      items: {
+        type: 'ARRAY',
+        items: { type: 'STRING' },
+      },
+    },
+    rightAngles: {
+      type: 'ARRAY',
+      items: {
+        type: 'ARRAY',
+        items: { type: 'STRING' },
+      },
+    },
+    // Cho data-chart
+    chartType: {
+      type: 'STRING',
+      enum: ['bar', 'line', 'pie'],
+    },
+    title: { type: 'STRING' },
+    labels: {
+      type: 'ARRAY',
+      items: { type: 'STRING' },
+    },
+    series: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          name: { type: 'STRING' },
+          values: {
+            type: 'ARRAY',
+            items: { type: 'NUMBER' },
+          },
+        },
+        required: ['name', 'values'],
+      },
+    },
+    unit: { type: 'STRING' },
+  },
+  required: ['kind'],
+};
+
+/**
  * responseSchema cho Gemini sinh lô câu hỏi, hỗ trợ đầy đủ các trường figure và optionExprs
  */
 export const EXAM_BATCH_RESPONSE_SCHEMA = {
@@ -614,14 +806,15 @@ export const EXAM_BATCH_RESPONSE_SCHEMA = {
           correctAnswer: { type: 'STRING', description: 'Đáp án đúng (A, B, C, D hoặc từ điền, tóm tắt)' },
           explanation: { type: 'STRING', description: 'Lời giải chi tiết từng bước' },
           scoringGuide: { type: 'STRING', description: 'Hướng dẫn chấm điểm và barem điểm' },
+          figure: FIGURE_OBJECT_SCHEMA,
           figureKind: {
             type: 'STRING',
             enum: ['function-graph', 'variation-table', 'sign-table', 'geometry', 'data-chart', 'none'],
-            description: 'Loại hình vẽ: function-graph, variation-table, sign-table, geometry, data-chart hoặc none',
+            description: 'Loại hình vẽ: function-graph, variation-table, sign-table, geometry, data-chart hoặc none (tương thích cũ)',
           },
           figureJson: {
             type: 'STRING',
-            description: 'Chuỗi JSON chứa đối tượng dữ liệu hình vẽ chuẩn tương ứng với figureKind, hoặc chuỗi rỗng nếu none',
+            description: 'Chuỗi JSON chứa đối tượng dữ liệu hình vẽ chuẩn tương ứng với figureKind, hoặc chuỗi rỗng nếu none (tương thích cũ)',
           },
         },
         required: ['slotId', 'question', 'correctAnswer', 'explanation'],
@@ -666,12 +859,16 @@ export async function generateExamBatch(
         topic: s.topic,
         learningOutcome: s.learningOutcome,
         score: s.score,
+        needsFigure: Boolean(s.needsFigure),
+        figureKinds: s.figureKinds || [],
       })),
       null,
       2
     ) +
     avoidQuestionsText +
-    `\n\nHãy tạo đầy đủ ${batchSlots.length} câu hỏi theo đúng từng slotId trên và trả về JSON { "questions": [...] }.`;
+    `\n\nQUY ĐỊNH BẮT BUỘC:\n` +
+    `Slot có needsFigure=true BẮT BUỘC trả về dữ liệu hình hợp lệ thuộc figureKinds; slot needsFigure=false TUYỆT ĐỐI không nhắc tới hình trong câu dẫn.\n` +
+    `Hãy tạo đầy đủ ${batchSlots.length} câu hỏi theo đúng từng slotId trên và trả về JSON { "questions": [...] }.`;
 
   const contents: any[] = [...refParts, { text: slotsPrompt }];
 
@@ -849,18 +1046,50 @@ export async function generateCompleteExam(
     }
   }
 
+  // Nếu bật ưu tiên mẫu của code cho câu có hình (mặc định BẬT cho môn Toán):
+  // Tự động dựng câu hỏi Toán có hình bằng code thuần cho các slot khớp mẫu
+  const slotsToGenerateWithAi: BlueprintSlot[] = [];
+  if (config.preferCodeTemplatesForFigures !== false) {
+    for (const slot of unassignedSlots) {
+      if (slot.needsFigure) {
+        const templateQ = pickMathTemplate(slot, config, slot.orderNumber * 1013 + 37);
+        if (templateQ) {
+          assignedSlots.set(slot.id, templateQ);
+          continue;
+        }
+      }
+      slotsToGenerateWithAi.push(slot);
+    }
+  } else {
+    slotsToGenerateWithAi.push(...unassignedSlots);
+  }
+
   // Danh sách các câu hỏi hiện đã có (để tránh trùng lặp)
   const existingQuestions: Question[] = [
     ...Array.from(assignedSlots.values()),
     ...(existingQuestionsToAvoid || []),
   ];
 
-  const BATCH_SIZE = 8;
-  const totalBatches = Math.max(1, Math.ceil(unassignedSlots.length / BATCH_SIZE));
+  // Tách riêng: slot needsFigure = true gửi theo lô tối đa 3 câu; slot không hình gửi theo lô tối đa 8 câu
+  const figureSlots = slotsToGenerateWithAi.filter((s) => Boolean(s.needsFigure));
+  const noFigureSlots = slotsToGenerateWithAi.filter((s) => !s.needsFigure);
+
+  const batches: BlueprintSlot[][] = [];
+  const FIGURE_BATCH_SIZE = 3;
+  for (let i = 0; i < figureSlots.length; i += FIGURE_BATCH_SIZE) {
+    batches.push(figureSlots.slice(i, i + FIGURE_BATCH_SIZE));
+  }
+
+  const NO_FIGURE_BATCH_SIZE = 8;
+  for (let i = 0; i < noFigureSlots.length; i += NO_FIGURE_BATCH_SIZE) {
+    batches.push(noFigureSlots.slice(i, i + NO_FIGURE_BATCH_SIZE));
+  }
+
+  const totalBatches = Math.max(1, batches.length);
   const generatedMap = new Map<string, Question>();
 
-  if (unassignedSlots.length > 0) {
-    for (let b = 0; b < totalBatches; b++) {
+  if (batches.length > 0) {
+    for (let b = 0; b < batches.length; b++) {
       if (abortSignal?.aborted) {
         throw new Error('Quá trình tạo đề đã được người dùng hủy.');
       }
@@ -870,9 +1099,7 @@ export async function generateCompleteExam(
         await new Promise((resolve) => setTimeout(resolve, 400));
       }
 
-      const startIdx = b * BATCH_SIZE;
-      const endIdx = Math.min(startIdx + BATCH_SIZE, unassignedSlots.length);
-      const batchSlots = unassignedSlots.slice(startIdx, endIdx);
+      const batchSlots = batches[b];
       const rangeText = `câu ${batchSlots[0].orderNumber}–${batchSlots[batchSlots.length - 1].orderNumber}`;
 
       const percent = Math.round((b / totalBatches) * 100);
@@ -931,6 +1158,31 @@ export async function generateCompleteExam(
 }
 
 /**
+ * Tạo mẫu đối tượng figure động cho prompt JSON:
+ * Nếu slot needsFigure=true: đưa vào cấu trúc figure đầy đủ theo figureKinds
+ * Nếu slot needsFigure=false: trả về chuỗi rỗng (không đưa trường figure vào mẫu)
+ */
+export function getDynamicFigureSample(slot: BlueprintSlot): string {
+  if (!slot.needsFigure) {
+    return '';
+  }
+  const preferredKind = slot.figureKinds?.[0] || 'function-graph';
+  if (preferredKind === 'variation-table') {
+    return `,\n      "figure": {\n        "kind": "variation-table",\n        "xValues": ["-\\infty", "-1", "1", "+\\infty"],\n        "yValues": ["-\\infty", "2", "-2", "+\\infty"],\n        "trends": ["up", "down", "up"],\n        "derivativeSigns": ["+", "-", "+"]\n      }`;
+  }
+  if (preferredKind === 'sign-table') {
+    return `,\n      "figure": {\n        "kind": "sign-table",\n        "rowLabel": "f'(x)",\n        "xValues": ["-\\infty", "-1", "2", "+\\infty"],\n        "intervalSigns": ["+", "-", "+"],\n        "pointMarks": ["0", "0"]\n      }`;
+  }
+  if (preferredKind === 'geometry') {
+    return `,\n      "figure": {\n        "kind": "geometry",\n        "points": [\n          {"id": "S", "x": 160, "y": 30, "label": "S"},\n          {"id": "A", "x": 70, "y": 150, "label": "A"},\n          {"id": "B", "x": 150, "y": 180, "label": "B"},\n          {"id": "C", "x": 250, "y": 170, "label": "C"}\n        ],\n        "segments": [["S","A"], ["S","B"], ["S","C"], ["A","B"], ["B","C"]],\n        "dashed": [["A","C"]]\n      }`;
+  }
+  if (preferredKind === 'data-chart') {
+    return `,\n      "figure": {\n        "kind": "data-chart",\n        "chartType": "bar",\n        "title": "Biểu đồ",\n        "labels": ["Nhóm 1", "Nhóm 2", "Nhóm 3"],\n        "series": [{"name": "Giá trị", "values": [12, 18, 15]}],\n        "unit": "đơn vị"\n      }`;
+  }
+  return `,\n      "figure": {\n        "kind": "function-graph",\n        "functions": [{"expr": "x^3 - 3*x", "label": "y = f(x)"}],\n        "xRange": [-3, 3],\n        "yRange": [-4, 4]\n      }`;
+}
+
+/**
  * Sinh lại duy nhất một câu hỏi theo slot (khi giáo viên bấm nút "Tạo lại"):
  * - Giữ nguyên ô (dạng, mức, chủ đề, điểm)
  * - Gửi kèm danh sách các câu còn lại để AI tránh trùng
@@ -960,17 +1212,22 @@ export async function regenerateSlotWithContext(
     ? `\n\nYÊU CẦU RIÊNG CỦA GIÁO VIÊN CHO CÂU NÀY:\n${customHint.trim()}\n`
     : '';
 
+  const figureDirective = slot.needsFigure
+    ? `\nBẮT BUỘC VỀ HÌNH VẼ: Ô này có needsFigure=true, BẮT BUỘC trả về dữ liệu hình vẽ hợp lệ trong trường 'figure' (thuộc ${slot.figureKinds?.join(', ') || 'các dạng hình chuẩn'}). Bạn không vẽ hình, chỉ đưa dữ liệu. Mọi dữ kiện trong đề, đáp án và lời giải phải suy ra từ chính dữ liệu hình.`
+    : `\nLƯU Ý: Ô này needsFigure=false, TUYỆT ĐỐI không nhắc đến hình ảnh, đồ thị hoặc bảng trong câu dẫn và KHÔNG đưa trường 'figure' vào JSON.`;
+
   const promptText = `HÃY SINH DUY NHẤT 1 CÂU HỎI MỚI CHO Ô MA TRẬN SAU:
 - Mã ô: ${slot.id} (Câu số ${slot.orderNumber})
 - Dạng câu: ${slot.questionType}
 - Mức độ nhận thức: ${slot.level}
 - Chủ đề: ${slot.topic}
 - Điểm: ${slot.score}đ
+- Cần hình vẽ: ${Boolean(slot.needsFigure)}${slot.figureKinds ? ` (${slot.figureKinds.join(', ')})` : ''}
 ${avoidQuestionsText}${hintText}
 YÊU CẦU:
 1. Đúng chuẩn GDPT 2018 môn ${config.subject} lớp ${config.grade || ''}.
 2. Nội dung hoàn toàn mới, sáng tạo, không trùng lặp các câu trên.
-3. Đúng cấu trúc định dạng (${slot.questionType}): đủ lựa chọn, đáp án, lời giải chi tiết.
+3. Đúng cấu trúc định dạng (${slot.questionType}): đủ lựa chọn, đáp án, lời giải chi tiết.${figureDirective}
 4. Trả về đúng định dạng JSON:
 {
   "questions": [
@@ -983,9 +1240,7 @@ YÊU CẦU:
       "pairs": [...],
       "correctAnswer": "...",
       "explanation": "...",
-      "scoringGuide": "...",
-      "figureKind": "none",
-      "figureJson": ""
+      "scoringGuide": "..."${getDynamicFigureSample(slot)}
     }
   ]
 }`;
@@ -1179,6 +1434,10 @@ export async function repairQuestionWithFeedback(
   const systemInstruction = buildSystemInstruction(config);
   const refParts = buildReferenceParts(config);
 
+  const figureDirective = slot.needsFigure
+    ? `\nBẮT BUỘC VỀ HÌNH VẼ: Ô này có needsFigure=true, BẮT BUỘC trả về dữ liệu hình vẽ hợp lệ trong trường 'figure' (thuộc ${slot.figureKinds?.join(', ') || 'các dạng hình chuẩn'}). Bạn không vẽ hình, chỉ đưa dữ liệu. Mọi dữ kiện trong đề, đáp án và lời giải phải suy ra được từ chính dữ liệu hình.`
+    : `\nLƯU Ý: Ô này needsFigure=false, TUYỆT ĐỐI không nhắc đến hình ảnh, đồ thị hoặc bảng trong câu dẫn và KHÔNG đưa trường 'figure' vào JSON.`;
+
   const repairPrompt = `CHỈ THỊ ĐẶC BIỆT: TỰ SỬA VÀ TÁI BIÊN SOẠN CÂU HỎI DO GẶP LỖI CHẤT LƯỢNG
 Thông tin ô chỉ mục trong ma trận:
 - Mã ô: ${slot.id} (Câu số ${slot.orderNumber})
@@ -1186,6 +1445,7 @@ Thông tin ô chỉ mục trong ma trận:
 - Mức độ nhận thức: ${slot.level}
 - Chủ đề kiến thức: ${slot.topic}
 - Điểm số: ${slot.score}đ
+- Cần hình vẽ: ${Boolean(slot.needsFigure)}${slot.figureKinds ? ` (${slot.figureKinds.join(', ')})` : ''}
 
 CÂU HỎI HIỆN TẠI ĐANG BỊ PHÁT HIỆN LỖI:
 "${currentQ.question}"
@@ -1195,7 +1455,7 @@ ${suggestedFixes.length > 0 ? `- Gợi ý sửa:\n${suggestedFixes.map((f, i) =>
 
 YÊU CẦU:
 1. Hãy biên soạn lại câu hỏi này một cách cẩn thận, khắc phục triệt để các lỗi và vấn đề nêu trên.
-2. Đảm bảo đúng chuẩn kiến thức GDPT 2018, bám sát môn ${config.subject} lớp ${config.grade}.
+2. Đảm bảo đúng chuẩn kiến thức GDPT 2018, bám sát môn ${config.subject} lớp ${config.grade}.${figureDirective}
 3. Nếu là trắc nghiệm MCQ4: đủ 4 phương án, 1 đáp án duy nhất đúng, các phương án nhiễu cùng kiểu dữ liệu.
 4. NGUYÊN TẮC LỜI GIẢI VÀ ĐÁP ÁN:
    - Giải trọn vẹn đúng đề đã cho, tuyệt đối KHÔNG tự ý đổi đề trong lời giải (CẤM các cụm "Tuy nhiên, nếu đề bài", "giả sử đề bài", "như bản gốc", "kiểm tra lại tính toán").
@@ -1212,9 +1472,7 @@ YÊU CẦU:
       "pairs": [...],
       "correctAnswer": "A",
       "explanation": "Lời giải chi tiết đầy đủ...",
-      "scoringGuide": "Hướng dẫn chấm...",
-      "figureKind": "none",
-      "figureJson": ""
+      "scoringGuide": "Hướng dẫn chấm..."${getDynamicFigureSample(slot)}
     }
   ]
 }`;
@@ -1263,6 +1521,126 @@ YÊU CẦU:
     needsReview: true,
     reviewNote: `AI chưa sửa được: ${errorMessages.slice(0, 2).join('; ')}`,
   };
+}
+
+/**
+ * Chỉ xin dữ liệu hình (QuestionFigure) cho một câu hỏi đã có sẵn nội dung
+ * Giữ nguyên câu dẫn, options, correctAnswer và optionExprs
+ * Thử lại tối đa 3 lần, kiểm tra validateFigure và đối soát optionExprs
+ */
+export async function repairFigureOnly(
+  slot: BlueprintSlot,
+  config: ExamConfig,
+  question: Question,
+  abortSignal?: AbortSignal
+): Promise<QuestionFigure | null> {
+  const kindsPrompt =
+    slot.figureKinds && slot.figureKinds.length > 0
+      ? slot.figureKinds.join(' hoặc ')
+      : 'function-graph, variation-table, sign-table, geometry hoặc data-chart';
+
+  const promptText = `Cho câu hỏi sau (nguyên văn):
+"${question.question}"
+${question.options && question.options.length > 0 ? `Các phương án:\n${question.options.join('\n')}\n` : ''}Đáp án đúng là: ${question.correctAnswer}
+${question.optionExprs && question.optionExprs.length > 0 ? `Các biểu thức hàm số của từng phương án: ${question.optionExprs.join(', ')}\n` : ''}
+Hãy trả về duy nhất đối tượng figure (kind: ${kindsPrompt}) sao cho đúng với câu hỏi và đáp án đúng là ${question.correctAnswer}.
+LƯU Ý QUAN TRỌNG:
+1. Bạn không vẽ hình, chỉ đưa dữ liệu. Mọi dữ kiện trong đề, đáp án và lời giải phải suy ra được từ chính dữ liệu hình.
+2. Nếu là đồ thị hàm số (function-graph) và có các biểu thức hàm số của phương án, hàm trong figure.functions[0].expr BẮT BUỘC phải khớp với đáp án đúng ${question.correctAnswer}.
+3. Trả về đúng định dạng JSON: { "figure": { "kind": "...", ... } }`;
+
+  const FIGURE_ONLY_SCHEMA = {
+    type: 'OBJECT',
+    properties: {
+      figure: FIGURE_OBJECT_SCHEMA,
+    },
+    required: ['figure'],
+  };
+
+  const systemInstruction = `Bạn là chuyên gia mô hình hóa dữ liệu hình vẽ toán học và khoa học GDPT 2018. Bạn không vẽ hình, chỉ đưa dữ liệu đối tượng figure JSON chính xác tuyệt đối theo đề bài và đáp án đúng đã cho.`;
+  const refParts = buildReferenceParts(config);
+  const contents = [...refParts, { text: promptText }];
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    if (abortSignal?.aborted) break;
+
+    try {
+      const rawData = await callGeminiJsonApi(
+        systemInstruction,
+        contents,
+        abortSignal,
+        FIGURE_ONLY_SCHEMA
+      );
+
+      const rawFig = rawData?.figure;
+      if (!rawFig || typeof rawFig !== 'object' || !rawFig.kind) {
+        continue;
+      }
+
+      // 1. Kiểm tra tính hợp lệ bằng validateFigure
+      const validation = validateFigure(rawFig.kind, rawFig);
+      if (!validation.isValid) {
+        console.warn(`[repairFigureOnly] Lần ${attempt}/3: Hình vẽ không hợp lệ: ${validation.error}`);
+        continue;
+      }
+
+      // 2. Nếu là function-graph và có optionExprs, kiểm tra nhất quán đồ thị với đáp án đúng
+      if (
+        rawFig.kind === 'function-graph' &&
+        Array.isArray(rawFig.functions) &&
+        rawFig.functions.length > 0 &&
+        Array.isArray(question.optionExprs) &&
+        question.optionExprs.length === 4
+      ) {
+        const letters = ['A', 'B', 'C', 'D'];
+        const correctIdx = letters.indexOf((question.correctAnswer || '').trim().toUpperCase());
+        if (correctIdx >= 0 && correctIdx < question.optionExprs.length) {
+          const correctExpr = question.optionExprs[correctIdx];
+          const figureExpr = rawFig.functions[0].expr;
+          try {
+            const fnFigure = compile(figureExpr);
+            const fnCorrect = compile(correctExpr);
+            const [minX, maxX] = rawFig.xRange || [-3, 3];
+            let mismatchCount = 0;
+            let validComparisons = 0;
+            for (let step = 0; step < 10; step++) {
+              const testX = minX + (step + 0.5) * ((maxX - minX) / 10);
+              try {
+                const yFig = fnFigure.evaluate({ x: testX });
+                const yCorr = fnCorrect.evaluate({ x: testX });
+                if (
+                  typeof yFig === 'number' &&
+                  typeof yCorr === 'number' &&
+                  isFinite(yFig) &&
+                  isFinite(yCorr)
+                ) {
+                  validComparisons++;
+                  if (Math.abs(yFig - yCorr) > 0.05) mismatchCount++;
+                }
+              } catch {
+                // Điểm gián đoạn
+              }
+            }
+            if (validComparisons >= 3 && mismatchCount > 0) {
+              console.warn(
+                `[repairFigureOnly] Lần ${attempt}/3: Đồ thị (${figureExpr}) không khớp đáp án đúng (${correctExpr})`
+              );
+              continue;
+            }
+          } catch (compileErr) {
+            console.warn(`[repairFigureOnly] Lần ${attempt}/3: Lỗi biên dịch biểu thức hàm số:`, compileErr);
+            continue;
+          }
+        }
+      }
+
+      return rawFig as QuestionFigure;
+    } catch (err: any) {
+      console.warn(`[repairFigureOnly] Lần ${attempt}/3 gặp lỗi:`, err?.message || err);
+    }
+  }
+
+  return null;
 }
 
 /**

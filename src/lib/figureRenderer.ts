@@ -9,24 +9,97 @@ import {
 } from '../types';
 
 /**
- * Định dạng ký hiệu toán học phổ biến trong SVG (chuyển -\infty thành −∞, +\infty thành +∞)
+ * Thoát ký tự đặc biệt cho XML/SVG để tránh lỗi cú pháp parser SVG
  */
-function formatMathSymbolsForSvg(val: string): string {
-  if (!val) return '';
-  return val
+export function escapeXml(str: string): string {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+/**
+ * Định dạng ký hiệu toán học phổ biến trong SVG:
+ * - \frac{a}{b} -> a/b
+ * - \sqrt{x} -> √(x)
+ * - \pm -> ±
+ * - \cdot -> ·
+ * - -\infty -> −∞, +\infty -> +∞, \infty -> ∞
+ * - Bỏ $ và dấu ngoặc nhọn LaTeX {}
+ * - Thoát ký tự XML (&, <, >, ")
+ */
+export function formatMathSymbolsForSvg(val: string): string {
+  if (!val && val !== '0') return '';
+  let s = String(val).trim();
+
+  // Bỏ dấu $
+  s = s.replace(/\$/g, '');
+
+  // \frac{a}{b} thành a/b (hỗ trợ phân số lồng nhau)
+  while (/\\frac\{([^{}]+)\}\{([^{}]+)\}/.test(s)) {
+    s = s.replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, '$1/$2');
+  }
+
+  // \sqrt{x} thành √(x)
+  while (/\\sqrt\{([^{}]+)\}/.test(s)) {
+    s = s.replace(/\\sqrt\{([^{}]+)\}/g, '√($1)');
+  }
+  while (/\\sqrt\[([^\]]+)\]\{([^{}]+)\}/.test(s)) {
+    s = s.replace(/\\sqrt\[([^\]]+)\]\{([^{}]+)\}/g, '√($2)');
+  }
+
+  // \pm thành ±, \cdot thành ·
+  s = s.replace(/\\pm\b/g, '±').replace(/\\cdot\b/g, '·');
+
+  // Vô cùng
+  s = s
     .replace(/\\-?\\infty|-\\infty/g, '−∞')
     .replace(/\\+\\infty|\+\\infty/g, '+∞')
-    .replace(/\\infty/g, '∞')
-    .replace(/\\pm/g, '±')
-    .replace(/\+/g, '+')
-    .replace(/-/g, '−');
+    .replace(/\\infty/g, '∞');
+
+  // Bỏ dấu ngoặc nhọn LaTeX còn sót
+  s = s.replace(/[{}]/g, '');
+
+  // Thoát ký tự XML an toàn
+  return escapeXml(s);
+}
+
+/**
+ * Chọn bước chia tọa độ đẹp (1, 2, 5, 10...)
+ */
+function getNiceStep(range: number, targetTicks: number = 6): number {
+  if (range <= 0) return 1;
+  const roughStep = range / targetTicks;
+  const power = Math.pow(10, Math.floor(Math.log10(roughStep)));
+  const fraction = roughStep / power;
+  let niceFactor = 1;
+  if (fraction >= 7) niceFactor = 10;
+  else if (fraction >= 3.5) niceFactor = 5;
+  else if (fraction >= 1.5) niceFactor = 2;
+  else niceFactor = 1;
+  return niceFactor * power;
+}
+
+/**
+ * Định dạng số trên trục tọa độ: bỏ số 0, dấu trừ −, dấu phẩy thập phân
+ */
+function formatTickNumber(val: number): string {
+  const rounded = Number(Math.round(Number(val + 'e+6')) + 'e-6');
+  let str = rounded.toString().replace('.', ',');
+  if (rounded < 0) {
+    str = '−' + str.replace('-', '');
+  }
+  return str;
 }
 
 /**
  * Hiển thị khung đỏ khi figure bị lỗi cú pháp thay vì để trống
  */
 function renderFigureErrorSvg(message: string): string {
-  const safeMsg = message ? message.replace(/[<>&"']/g, ' ') : 'Lỗi dữ liệu hình';
+  const safeMsg = message ? escapeXml(message) : 'Lỗi dữ liệu hình';
   return `<svg viewBox="0 0 360 65" xmlns="http://www.w3.org/2000/svg" class="w-full max-w-[360px] mx-auto select-none">
     <rect width="360" height="65" fill="#fff1f2" stroke="#e11d48" stroke-width="1.5" rx="6" />
     <text x="180" y="27" text-anchor="middle" font-size="12" font-weight="bold" fill="#be123c">Hình vẽ gặp lỗi cú pháp</text>
@@ -78,7 +151,12 @@ function renderFunctionGraphSvg(fig: FunctionGraphFigure): string {
   const padTop = 30;
   const padBottom = 35;
 
-  if (!Array.isArray(fig.xRange) || fig.xRange.length !== 2 || typeof fig.xRange[0] !== 'number' || typeof fig.xRange[1] !== 'number') {
+  if (
+    !Array.isArray(fig.xRange) ||
+    fig.xRange.length !== 2 ||
+    typeof fig.xRange[0] !== 'number' ||
+    typeof fig.xRange[1] !== 'number'
+  ) {
     throw new Error('Khoảng biến xRange không hợp lệ');
   }
   const [rawMinX, rawMaxX] = fig.xRange;
@@ -88,15 +166,77 @@ function renderFunctionGraphSvg(fig: FunctionGraphFigure): string {
   const minX = rawMinX;
   const maxX = rawMaxX;
 
-  let minY = -4;
-  let maxY = 4;
-  if (fig.yRange && fig.yRange.length === 2) {
+  // 2) Tự động đo yRange nếu AI không cung cấp:
+  // Tính 200 điểm của hàm trên xRange, bỏ 3% đầu và cuối để tránh tiệm cận, thêm lề 12%, luôn bao gồm gốc 0, làm tròn ra số nguyên.
+  let minY: number;
+  let maxY: number;
+
+  if (
+    fig.yRange &&
+    Array.isArray(fig.yRange) &&
+    fig.yRange.length === 2 &&
+    isFinite(fig.yRange[0]) &&
+    isFinite(fig.yRange[1])
+  ) {
     minY = Math.min(fig.yRange[0], fig.yRange[1]);
     maxY = Math.max(fig.yRange[0], fig.yRange[1]);
-  }
-  if (minY === maxY) {
-    minY -= 2;
-    maxY += 2;
+    if (minY === maxY) {
+      minY -= 2;
+      maxY += 2;
+    }
+  } else {
+    const yVals: number[] = [];
+    const autoSamples = 200;
+    const autoDx = (maxX - minX) / (autoSamples - 1);
+
+    (fig.functions || []).forEach((fnObj) => {
+      try {
+        const compiled = compile(fnObj.expr);
+        for (let i = 0; i < autoSamples; i++) {
+          const x = minX + i * autoDx;
+          try {
+            const y = compiled.evaluate({ x });
+            if (typeof y === 'number' && isFinite(y) && !isNaN(y)) {
+              yVals.push(y);
+            }
+          } catch {}
+        }
+      } catch {}
+    });
+
+    if (yVals.length >= 10) {
+      yVals.sort((a, b) => a - b);
+      const trimCount = Math.floor(yVals.length * 0.03);
+      const trimmed = yVals.slice(trimCount, yVals.length - trimCount);
+      let autoMin = trimmed[0];
+      let autoMax = trimmed[trimmed.length - 1];
+
+      // Luôn bao gồm gốc 0
+      autoMin = Math.min(autoMin, 0);
+      autoMax = Math.max(autoMax, 0);
+
+      // Thêm lề 12%
+      const span = (autoMax - autoMin) || 2;
+      const margin = span * 0.12;
+      autoMin -= margin;
+      autoMax += margin;
+
+      // Đảm bảo vẫn bao gồm gốc 0
+      autoMin = Math.min(autoMin, 0);
+      autoMax = Math.max(autoMax, 0);
+
+      // Làm tròn ra số nguyên
+      minY = Math.floor(autoMin);
+      maxY = Math.ceil(autoMax);
+
+      if (minY === maxY) {
+        minY -= 2;
+        maxY += 2;
+      }
+    } else {
+      minY = -4;
+      maxY = 4;
+    }
   }
 
   const plotW = width - padLeft - padRight;
@@ -108,6 +248,7 @@ function renderFunctionGraphSvg(fig: FunctionGraphFigure): string {
   const originX = toPxX(0);
   const originY = toPxY(0);
 
+  // Lưới tọa độ phụ (grid)
   let gridSvg = '';
   if (fig.showGrid !== false) {
     const xStep = Math.max(1, Math.round((maxX - minX) / 8));
@@ -128,23 +269,57 @@ function renderFunctionGraphSvg(fig: FunctionGraphFigure): string {
   const clampOxY = Math.max(padTop + 10, Math.min(height - padBottom - 10, originY));
   const clampOyX = Math.max(padLeft + 10, Math.min(width - padRight - 10, originX));
 
-  const axesSvg = `
-    <!-- Mũi tên Ox, Oy -->
+  // 1) Thêm vạch chia và số trên trục Ox và Oy (bỏ số 0, dùng dấu trừ − và dấu phẩy thập phân)
+  let ticksSvg = '';
+  const stepX = getNiceStep(maxX - minX, 6);
+  const stepY = getNiceStep(maxY - minY, 5);
+
+  // Vạch chia trên trục Ox
+  const firstTickX = Math.ceil(minX / stepX) * stepX;
+  for (let x = firstTickX; x <= maxX; x += stepX) {
+    if (Math.abs(x) < stepX * 0.05) continue; // Bỏ số 0
+    const px = toPxX(x);
+    if (px < padLeft + 6 || px > width - padRight - 6) continue;
+    ticksSvg += `<line x1="${px.toFixed(1)}" y1="${(clampOxY - 3).toFixed(1)}" x2="${px.toFixed(1)}" y2="${(clampOxY + 3).toFixed(1)}" stroke="#000000" stroke-width="1.2" />`;
+    const labelY = clampOxY > height - padBottom - 18 ? clampOxY - 6 : clampOxY + 13;
+    ticksSvg += `<text x="${px.toFixed(1)}" y="${labelY.toFixed(1)}" font-size="9.5" font-family="'Times New Roman', serif" fill="#000000" text-anchor="middle">${formatTickNumber(x)}</text>`;
+  }
+
+  // Vạch chia trên trục Oy (Bắt buộc vì học sinh cần đọc giao điểm với Oy)
+  const firstTickY = Math.ceil(minY / stepY) * stepY;
+  for (let y = firstTickY; y <= maxY; y += stepY) {
+    if (Math.abs(y) < stepY * 0.05) continue; // Bỏ số 0
+    const py = toPxY(y);
+    if (py < padTop + 6 || py > height - padBottom - 6) continue;
+    ticksSvg += `<line x1="${(clampOyX - 3).toFixed(1)}" y1="${py.toFixed(1)}" x2="${(clampOyX + 3).toFixed(1)}" y2="${py.toFixed(1)}" stroke="#000000" stroke-width="1.2" />`;
+    const labelX = clampOyX < padLeft + 18 ? clampOyX + 6 : clampOyX - 5;
+    const anchor = clampOyX < padLeft + 18 ? 'start' : 'end';
+    ticksSvg += `<text x="${labelX.toFixed(1)}" y="${(py + 3.5).toFixed(1)}" font-size="9.5" font-family="'Times New Roman', serif" fill="#000000" text-anchor="${anchor}">${formatTickNumber(y)}</text>`;
+  }
+
+  // 4) Mũi tên riêng theo loại (fig-arrow-g) và 3) clipPath cắt đường cong trong khung vẽ
+  const defsSvg = `
     <defs>
-      <marker id="fig-arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <marker id="fig-arrow-g" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
         <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#000000" />
       </marker>
+      <clipPath id="fig-plot-clip">
+        <rect x="${padLeft}" y="${padTop}" width="${plotW}" height="${plotH}" />
+      </clipPath>
     </defs>
+  `;
+
+  const axesSvg = `
     <!-- Trục Ox -->
-    <line x1="${padLeft - 10}" y1="${clampOxY.toFixed(1)}" x2="${(width - padRight + 15).toFixed(1)}" y2="${clampOxY.toFixed(1)}" stroke="#000000" stroke-width="1.6" marker-end="url(#fig-arrow)" />
+    <line x1="${padLeft - 10}" y1="${clampOxY.toFixed(1)}" x2="${(width - padRight + 15).toFixed(1)}" y2="${clampOxY.toFixed(1)}" stroke="#000000" stroke-width="1.6" marker-end="url(#fig-arrow-g)" />
     <text x="${(width - padRight + 18).toFixed(1)}" y="${(clampOxY + 4).toFixed(1)}" font-size="12" font-style="italic" font-family="'Times New Roman', serif" fill="#000000" font-weight="bold">x</text>
 
     <!-- Trục Oy -->
-    <line x1="${clampOyX.toFixed(1)}" y1="${(height - padBottom + 10).toFixed(1)}" x2="${clampOyX.toFixed(1)}" y2="${(padTop - 15).toFixed(1)}" stroke="#000000" stroke-width="1.6" marker-end="url(#fig-arrow)" />
+    <line x1="${clampOyX.toFixed(1)}" y1="${(height - padBottom + 10).toFixed(1)}" x2="${clampOyX.toFixed(1)}" y2="${(padTop - 15).toFixed(1)}" stroke="#000000" stroke-width="1.6" marker-end="url(#fig-arrow-g)" />
     <text x="${(clampOyX - 4).toFixed(1)}" y="${(padTop - 18).toFixed(1)}" font-size="12" font-style="italic" font-family="'Times New Roman', serif" fill="#000000" font-weight="bold" text-anchor="end">y</text>
 
     <!-- Gốc O -->
-    <text x="${(clampOyX - 4).toFixed(1)}" y="${(clampOxY + 13).toFixed(1)}" font-size="11" font-family="'Times New Roman', serif" fill="#000000">O</text>
+    <text x="${(clampOyX - 5).toFixed(1)}" y="${(clampOxY + 12).toFixed(1)}" font-size="11" font-family="'Times New Roman', serif" fill="#000000">O</text>
   `;
 
   if (!Array.isArray(fig.functions) || fig.functions.length === 0) {
@@ -199,8 +374,7 @@ function renderFunctionGraphSvg(fig: FunctionGraphFigure): string {
         }
       }
 
-      // Kẹp tọa độ hiển thị trong phạm vi hợp lý
-      const clampedY = Math.max(minY - 3, Math.min(maxY + 3, y));
+      const clampedY = Math.max(minY - 5, Math.min(maxY + 5, y));
       currentSegment.push({ x: toPxX(x), y: toPxY(clampedY) });
       prevY = y;
     }
@@ -209,7 +383,6 @@ function renderFunctionGraphSvg(fig: FunctionGraphFigure): string {
       segments.push(currentSegment);
     }
 
-    // Biến các segments thành path
     segments.forEach((seg) => {
       if (seg.length < 2) return;
       let d = `M ${seg[0].x.toFixed(1)} ${seg[0].y.toFixed(1)}`;
@@ -224,7 +397,7 @@ function renderFunctionGraphSvg(fig: FunctionGraphFigure): string {
     throw new Error('Không thể vẽ đồ thị từ biểu thức hàm số đã cho');
   }
 
-  // Kiểm tra danh sách nhãn được phép hiển thị cho học sinh (studentVisibleLabels)
+  // Danh sách nhãn được phép hiển thị cho học sinh
   const allowedLabelsSet =
     Array.isArray(fig.studentVisibleLabels) && fig.studentVisibleLabels.length > 0
       ? new Set(fig.studentVisibleLabels.map((l) => l.trim().toLowerCase()))
@@ -255,13 +428,10 @@ function renderFunctionGraphSvg(fig: FunctionGraphFigure): string {
         showDashedLines = false;
       }
     } else {
-      // Khi không có studentVisibleLabels chỉ định rõ:
-      // Bỏ mọi nhãn kiểu Max/Min, tọa độ cực trị và bỏ đường nét đứt đến cực trị
       if (isLeakyExtremum) {
         displayLabel = null;
         showDashedLines = false;
       } else if (rawLabel) {
-        // Chỉ hiện nhãn nếu là tên điểm trung tính (A, B, C, M, N...) hoặc giá trị mốc
         displayLabel = rawLabel;
         showDashedLines = true;
       } else {
@@ -270,7 +440,6 @@ function renderFunctionGraphSvg(fig: FunctionGraphFigure): string {
       }
     }
 
-    // Đường gióng nét đứt tới Ox, Oy (chỉ vẽ khi không phải điểm lộ đáp án)
     if (showDashedLines) {
       if (Math.abs(pt.x) > 0.05) {
         pointsSvg += `<line x1="${px.toFixed(1)}" y1="${py.toFixed(1)}" x2="${px.toFixed(1)}" y2="${clampOxY.toFixed(1)}" stroke="#64748b" stroke-width="1" stroke-dasharray="3,3" />`;
@@ -280,20 +449,24 @@ function renderFunctionGraphSvg(fig: FunctionGraphFigure): string {
       }
     }
 
-    // Điểm tròn
     pointsSvg += `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="2.5" fill="#000000" />`;
 
-    // Nhãn điểm (nếu được phép hiển thị)
     if (displayLabel) {
-      pointsSvg += `<text x="${(px + 4).toFixed(1)}" y="${(py - 4).toFixed(1)}" font-size="10.5" font-family="'Times New Roman', serif" fill="#000000" font-weight="bold">${displayLabel}</text>`;
+      const safeLabel = formatMathSymbolsForSvg(displayLabel);
+      pointsSvg += `<text x="${(px + 4).toFixed(1)}" y="${(py - 4).toFixed(1)}" font-size="10.5" font-family="'Times New Roman', serif" fill="#000000" font-weight="bold">${safeLabel}</text>`;
     }
   });
 
   return `<svg viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" class="w-full h-auto max-w-[360px] mx-auto select-none bg-white">
     <rect width="${width}" height="${height}" fill="#ffffff" />
+    ${defsSvg}
     ${gridSvg}
     ${axesSvg}
-    ${curvesSvg}
+    ${ticksSvg}
+    <!-- 3) Cắt đường cong trong khung vẽ bằng clipPath -->
+    <g clip-path="url(#fig-plot-clip)">
+      ${curvesSvg}
+    </g>
     ${pointsSvg}
   </svg>`;
 }
@@ -327,7 +500,6 @@ function renderGeometrySvg(fig: GeometryFigure): string {
   const plotW = width - padding * 2;
   const plotH = height - padding * 2;
 
-  // Giữ tỉ lệ hình (aspect ratio) không bị méo
   const scale = Math.min(plotW / rangeX, plotH / rangeY);
   const offsetX = (width - rangeX * scale) / 2;
   const offsetY = (height - rangeY * scale) / 2;
@@ -416,7 +588,7 @@ function renderGeometrySvg(fig: GeometryFigure): string {
     elementsSvg += `<polyline points="${p1x.toFixed(1)},${p1y.toFixed(1)} ${p2x.toFixed(1)},${p2y.toFixed(1)} ${p3x.toFixed(1)},${p3y.toFixed(1)}" fill="none" stroke="#000000" stroke-width="1.2" />`;
   });
 
-  // Điểm và Nhãn điểm (labels)
+  // Điểm và Nhãn điểm (labels) - Thoát XML cho mọi tên điểm
   let pointsSvg = '';
   const centroidX = fig.points.reduce((acc, p) => acc + p.x, 0) / fig.points.length;
   const centroidY = fig.points.reduce((acc, p) => acc + p.y, 0) / fig.points.length;
@@ -425,14 +597,14 @@ function renderGeometrySvg(fig: GeometryFigure): string {
     const px = toPx(p);
     pointsSvg += `<circle cx="${px.x.toFixed(1)}" cy="${px.y.toFixed(1)}" r="2.2" fill="#000000" />`;
 
-    // Đẩy nhãn lệch nhẹ ra phía ngoài trọng tâm hình
     const vx = p.x - centroidX;
     const vy = p.y - centroidY;
     const dist = Math.hypot(vx, vy) || 1;
     const offsetXLabel = (vx / dist) * 11;
-    const offsetYLabel = (vy / dist) * -11; // SVG Y hướng xuống
+    const offsetYLabel = (vy / dist) * -11;
 
-    pointsSvg += `<text x="${(px.x + offsetXLabel).toFixed(1)}" y="${(px.y + offsetYLabel + 4).toFixed(1)}" font-size="12" font-style="italic" font-family="'Times New Roman', serif" font-weight="bold" fill="#000000" text-anchor="middle">${p.label || p.id}</text>`;
+    const labelText = formatMathSymbolsForSvg(p.label || p.id);
+    pointsSvg += `<text x="${(px.x + offsetXLabel).toFixed(1)}" y="${(px.y + offsetYLabel + 4).toFixed(1)}" font-size="12" font-style="italic" font-family="'Times New Roman', serif" font-weight="bold" fill="#000000" text-anchor="middle">${labelText}</text>`;
   });
 
   return `<svg viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" class="w-full h-auto max-w-[340px] mx-auto select-none bg-white">
@@ -444,6 +616,8 @@ function renderGeometrySvg(fig: GeometryFigure): string {
 
 /**
  * 3. Vẽ bảng biến thiên (variation-table) chuẩn THPT
+ * 5) Chừa lề 26 px ở hai đầu cột giá trị để ±∞ không đè lên đường kẻ; hàm colX(i) và colMid(i)
+ * 4) Mũi tên riêng có <defs><marker id="fig-arrow-v">
  */
 function renderVariationTableSvg(fig: VariationTableFigure): string {
   const width = 360;
@@ -452,16 +626,33 @@ function renderVariationTableSvg(fig: VariationTableFigure): string {
 
   const headerW = 55;
   const tableW = width - 20;
-  const contentW = tableW - headerW;
+  const sideMargin = 26; // Chừa lề 26 px ở hai đầu cột giá trị
+  const startX = 10 + headerW + sideMargin;
+  const endX = 10 + tableW - sideMargin;
+  const spanX = Math.max(1, endX - startX);
   const numCols = Math.max(2, fig.xValues.length);
-  const colStep = contentW / (numCols - 1);
+
+  // Hàm colX(i) và colMid(i) dùng chung cho mọi hàng
+  const colX = (i: number): number => {
+    if (numCols <= 1) return (startX + endX) / 2;
+    return startX + (i / (numCols - 1)) * spanX;
+  };
+
+  const colMid = (i: number): number => {
+    return (colX(i) + colX(i + 1)) / 2;
+  };
 
   const row1H = 35;
   const row2H = hasDeriv ? 35 : 0;
   const row3H = 75;
 
-  // Khung bảng
+  // Khung bảng & marker fig-arrow-v riêng
   let svg = `<svg viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" class="w-full h-auto max-w-[360px] mx-auto select-none bg-white font-serif">
+    <defs>
+      <marker id="fig-arrow-v" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#000000" />
+      </marker>
+    </defs>
     <rect width="${width}" height="${height}" fill="#ffffff" />
     <rect x="10" y="10" width="${tableW}" height="${height - 20}" fill="#ffffff" stroke="#000000" stroke-width="1.5" rx="3" />
     
@@ -476,7 +667,6 @@ function renderVariationTableSvg(fig: VariationTableFigure): string {
   `;
 
   if (hasDeriv) {
-    // Kẻ ngang hàng y'
     svg += `
       <line x1="10" y1="${10 + row1H + row2H}" x2="${10 + tableW}" y2="${10 + row1H + row2H}" stroke="#000000" stroke-width="1.2" />
       <text x="${10 + headerW / 2}" y="${10 + row1H + 22}" font-size="13" font-style="italic" font-weight="bold" fill="#000000" text-anchor="middle">y'</text>
@@ -487,23 +677,23 @@ function renderVariationTableSvg(fig: VariationTableFigure): string {
   const yLabelY = hasDeriv ? 10 + row1H + row2H + row3H / 2 + 4 : 10 + row1H + row3H / 2 + 4;
   svg += `<text x="${10 + headerW / 2}" y="${yLabelY}" font-size="13" font-style="italic" font-weight="bold" fill="#000000" text-anchor="middle">y</text>`;
 
-  // Điền hàng x
+  // Điền hàng x bằng colX(i)
   fig.xValues.forEach((val, i) => {
-    const px = 10 + headerW + i * colStep;
+    const px = colX(i);
     const cleanVal = formatMathSymbolsForSvg(val);
     svg += `<text x="${px.toFixed(1)}" y="${10 + 22}" font-size="11" fill="#000000" text-anchor="middle">${cleanVal}</text>`;
   });
 
-  // Điền hàng y' (dấu và số 0)
+  // Điền hàng y' (dấu tại colMid(i) và số 0 tại colX(i))
   if (hasDeriv && fig.derivativeSigns) {
     fig.derivativeSigns.forEach((sign, i) => {
-      const midX = 10 + headerW + (i + 0.5) * colStep;
+      const midX = colMid(i);
       const cleanSign = sign === '-' ? '−' : '+';
       svg += `<text x="${midX.toFixed(1)}" y="${10 + row1H + 22}" font-size="13" font-weight="bold" fill="#000000" text-anchor="middle">${cleanSign}</text>`;
     });
-    // Điền số 0 tại các nghiệm
+    // Điền số 0 tại các nghiệm ở giữa
     for (let i = 1; i < fig.xValues.length - 1; i++) {
-      const px = 10 + headerW + i * colStep;
+      const px = colX(i);
       svg += `<text x="${px.toFixed(1)}" y="${10 + row1H + 22}" font-size="11" fill="#64748b" text-anchor="middle">0</text>`;
     }
   }
@@ -514,8 +704,7 @@ function renderVariationTableSvg(fig: VariationTableFigure): string {
 
   const yPos: { x: number; y: number }[] = [];
   fig.yValues.forEach((val, i) => {
-    const px = 10 + headerW + i * colStep;
-    // Xác định vị trí đỉnh (yTop) hay đáy (yBottom) dựa vào xu hướng
+    const px = colX(i);
     let py = yTop;
     if (i === 0) {
       py = fig.trends[0] === 'up' ? yBottom : yTop;
@@ -531,7 +720,7 @@ function renderVariationTableSvg(fig: VariationTableFigure): string {
     svg += `<text x="${px.toFixed(1)}" y="${(py + (py === yTop ? -4 : 12)).toFixed(1)}" font-size="11" font-weight="bold" fill="#000000" text-anchor="middle">${cleanYVal}</text>`;
   });
 
-  // Mũi tên biến thiên
+  // Mũi tên biến thiên sử dụng marker #fig-arrow-v
   fig.trends.forEach((trend, i) => {
     if (i >= yPos.length - 1) return;
     const p1 = yPos[i];
@@ -541,7 +730,7 @@ function renderVariationTableSvg(fig: VariationTableFigure): string {
     const arrowY2 = trend === 'up' ? yTop : yBottom;
 
     svg += `
-      <line x1="${(p1.x + 8).toFixed(1)}" y1="${arrowY1}" x2="${(p2.x - 8).toFixed(1)}" y2="${arrowY2}" stroke="#000000" stroke-width="1.5" marker-end="url(#fig-arrow)" />
+      <line x1="${(p1.x + 8).toFixed(1)}" y1="${arrowY1}" x2="${(p2.x - 8).toFixed(1)}" y2="${arrowY2}" stroke="#000000" stroke-width="1.5" marker-end="url(#fig-arrow-v)" />
     `;
   });
 
@@ -551,18 +740,33 @@ function renderVariationTableSvg(fig: VariationTableFigure): string {
 
 /**
  * 4. Vẽ bảng xét dấu (sign-table) chuẩn THPT
- * { kind: 'sign-table', rowLabel: string, xValues: string[], intervalSigns: ('+' | '-')[], pointMarks: ('0' | '||' | '')[] }
+ * 5) Chừa lề 26 px ở hai đầu cột giá trị; hàm colX(i) và colMid(i)
+ * 6) Thoát XML cho rowLabel
  */
 function renderSignTableSvg(fig: SignTableFigure): string {
   const width = 360;
   const height = 95;
   const headerW = 55;
   const tableW = width - 20;
-  const contentW = tableW - headerW;
+  const sideMargin = 26; // Chừa lề 26 px ở hai đầu
+  const startX = 10 + headerW + sideMargin;
+  const endX = 10 + tableW - sideMargin;
+  const spanX = Math.max(1, endX - startX);
   const numCols = Math.max(2, fig.xValues.length);
-  const colStep = contentW / (numCols - 1);
+
+  const colX = (i: number): number => {
+    if (numCols <= 1) return (startX + endX) / 2;
+    return startX + (i / (numCols - 1)) * spanX;
+  };
+
+  const colMid = (i: number): number => {
+    return (colX(i) + colX(i + 1)) / 2;
+  };
+
   const row1H = 38;
   const row2H = 37;
+
+  const safeRowLabel = formatMathSymbolsForSvg(fig.rowLabel || "f'(x)");
 
   let svg = `<svg viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" class="w-full h-auto max-w-[360px] mx-auto select-none bg-white font-serif">
     <rect width="${width}" height="${height}" fill="#ffffff" />
@@ -577,23 +781,22 @@ function renderSignTableSvg(fig: SignTableFigure): string {
     <!-- Nhãn hàng x -->
     <text x="${10 + headerW / 2}" y="${10 + 24}" font-size="13" font-style="italic" font-weight="bold" fill="#000000" text-anchor="middle">x</text>
 
-    <!-- Nhãn hàng dấu (rowLabel: ví dụ f'(x) hoặc y') -->
-    <text x="${10 + headerW / 2}" y="${10 + row1H + 24}" font-size="13" font-style="italic" font-weight="bold" fill="#000000" text-anchor="middle">${fig.rowLabel || "f'(x)"}</text>
+    <!-- Nhãn hàng dấu (rowLabel) -->
+    <text x="${10 + headerW / 2}" y="${10 + row1H + 24}" font-size="13" font-style="italic" font-weight="bold" fill="#000000" text-anchor="middle">${safeRowLabel}</text>
   `;
 
-  // Điền hàng x (xValues)
+  // Điền hàng x bằng colX(i)
   fig.xValues.forEach((val, i) => {
-    const px = 10 + headerW + i * colStep;
+    const px = colX(i);
     const cleanVal = formatMathSymbolsForSvg(val);
     svg += `<text x="${px.toFixed(1)}" y="${10 + 24}" font-size="12" fill="#000000" text-anchor="middle">${cleanVal}</text>`;
   });
 
-  // Điền hàng dấu: các mốc pointMarks ngay dưới các mốc ở giữa
+  // Điền hàng dấu: các mốc pointMarks tại colX(i + 1)
   if (Array.isArray(fig.pointMarks)) {
     fig.pointMarks.forEach((mark, i) => {
-      const px = 10 + headerW + (i + 1) * colStep;
+      const px = colX(i + 1);
       if (mark === '||') {
-        // Dấu hai gạch song song thẳng đứng
         svg += `
           <line x1="${(px - 1.5).toFixed(1)}" y1="${10 + row1H}" x2="${(px - 1.5).toFixed(1)}" y2="${10 + row1H + row2H}" stroke="#000000" stroke-width="1.2" />
           <line x1="${(px + 1.5).toFixed(1)}" y1="${10 + row1H}" x2="${(px + 1.5).toFixed(1)}" y2="${10 + row1H + row2H}" stroke="#000000" stroke-width="1.2" />
@@ -601,15 +804,16 @@ function renderSignTableSvg(fig: SignTableFigure): string {
       } else if (mark === '0' || (mark as any) === 0) {
         svg += `<text x="${px.toFixed(1)}" y="${10 + row1H + 24}" font-size="12" fill="#000000" text-anchor="middle">0</text>`;
       } else if (mark) {
-        svg += `<text x="${px.toFixed(1)}" y="${10 + row1H + 24}" font-size="12" fill="#000000" text-anchor="middle">${mark}</text>`;
+        const safeMark = formatMathSymbolsForSvg(mark);
+        svg += `<text x="${px.toFixed(1)}" y="${10 + row1H + 24}" font-size="12" fill="#000000" text-anchor="middle">${safeMark}</text>`;
       }
     });
   }
 
-  // Điền khoảng dấu intervalSigns (+ hoặc -) ở giữa các mốc
+  // Điền khoảng dấu intervalSigns tại colMid(i)
   if (Array.isArray(fig.intervalSigns)) {
     fig.intervalSigns.forEach((sign, i) => {
-      const midX = 10 + headerW + (i + 0.5) * colStep;
+      const midX = colMid(i);
       const displaySign = sign === '-' ? '−' : '+';
       svg += `<text x="${midX.toFixed(1)}" y="${10 + row1H + 25}" font-size="15" font-weight="bold" fill="#000000" text-anchor="middle">${displaySign}</text>`;
     });
@@ -620,7 +824,8 @@ function renderSignTableSvg(fig: SignTableFigure): string {
 }
 
 /**
- * 4. Vẽ biểu đồ số liệu (data-chart)
+ * 5. Vẽ biểu đồ số liệu (data-chart)
+ * 6) Thoát XML cho title, unit, labels, series values
  */
 function renderDataChartSvg(fig: DataChartFigure): string {
   const width = 360;
@@ -648,11 +853,12 @@ function renderDataChartSvg(fig: DataChartFigure): string {
 
   let titleSvg = '';
   if (fig.title) {
-    titleSvg = `<text x="${width / 2}" y="20" font-size="12" font-weight="bold" fill="#000000" text-anchor="middle">${fig.title}</text>`;
+    const safeTitle = formatMathSymbolsForSvg(fig.title);
+    titleSvg = `<text x="${width / 2}" y="20" font-size="12" font-weight="bold" fill="#000000" text-anchor="middle">${safeTitle}</text>`;
   }
 
   const unitSvg = fig.unit
-    ? `<text x="${padLeft}" y="${padTop - 10}" font-size="10" font-style="italic" fill="#64748b">(${fig.unit})</text>`
+    ? `<text x="${padLeft}" y="${padTop - 10}" font-size="10" font-style="italic" fill="#64748b">(${formatMathSymbolsForSvg(fig.unit)})</text>`
     : '';
 
   // Trục Ox, Oy
@@ -664,8 +870,7 @@ function renderDataChartSvg(fig: DataChartFigure): string {
   let chartContent = '';
 
   if (fig.chartType === 'line') {
-    // Biểu đồ đường
-    series.forEach((s, sIdx) => {
+    series.forEach((s) => {
       const pts = s.values.map((v, i) => {
         const x = padLeft + (i + 0.5) * (plotW / labels.length);
         const y = padTop + plotH - (v / maxVal) * plotH;
@@ -684,11 +889,10 @@ function renderDataChartSvg(fig: DataChartFigure): string {
       });
     });
   } else {
-    // Mặc định: Biểu đồ cột (bar)
     const groupW = plotW / labels.length;
     const barW = Math.min(28, (groupW * 0.7) / series.length);
 
-    labels.forEach((label, i) => {
+    labels.forEach((_label, i) => {
       const groupX = padLeft + i * groupW + groupW * 0.15;
       series.forEach((s, sIdx) => {
         const v = s.values[i] || 0;
@@ -702,11 +906,12 @@ function renderDataChartSvg(fig: DataChartFigure): string {
     });
   }
 
-  // Nhãn x-axis
+  // Nhãn x-axis đã thoát XML
   let labelsSvg = '';
   labels.forEach((label, i) => {
     const x = padLeft + (i + 0.5) * (plotW / labels.length);
-    labelsSvg += `<text x="${x.toFixed(1)}" y="${height - padBottom + 16}" font-size="10.5" fill="#000000" text-anchor="middle">${label}</text>`;
+    const safeLabel = formatMathSymbolsForSvg(label);
+    labelsSvg += `<text x="${x.toFixed(1)}" y="${height - padBottom + 16}" font-size="10.5" fill="#000000" text-anchor="middle">${safeLabel}</text>`;
   });
 
   return `<svg viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" class="w-full h-auto max-w-[360px] mx-auto select-none bg-white font-sans">

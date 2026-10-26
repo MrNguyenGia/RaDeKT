@@ -46,10 +46,11 @@ function renderQuestionFigureHtmlForPrint(q: Question): string {
   if (q.figure) {
     const svgStr = figureToSvg(q.figure);
     if (svgStr) {
-      const isTable = q.figure.type === 'VARIATION_TABLE' || q.figure.type === 'SIGN_TABLE';
+      const isTable = q.figure.kind === 'variation-table' || q.figure.kind === 'sign-table';
       const maxW = isTable ? '100%' : '70%';
-      const caption = q.figure.caption
-        ? `<div style="text-align: center; font-style: italic; font-size: 11pt; color: #000; margin-top: 4pt;">${q.figure.caption.trim()}</div>`
+      const captionText = (q.figure as any)?.caption;
+      const caption = captionText && captionText.trim().length > 0
+        ? `<div style="text-align: center; font-style: italic; font-size: 11pt; color: #000; margin-top: 4pt;">${captionText.trim()}</div>`
         : '';
       return `
         <div style="text-align: center; margin: 8pt auto; max-width: ${maxW}; page-break-inside: avoid; break-inside: avoid;">

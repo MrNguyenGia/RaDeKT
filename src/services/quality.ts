@@ -1,10 +1,14 @@
 import { BlueprintSlot, Exam, ExamConfig, Question, QuestionType } from '../types';
-import { QualityIssue, runCodeQualityCheck } from '../lib/validate';
+import { QualityIssue, runCodeQualityCheck, validateFigure } from '../lib/validate';
 import { QUALITY_CRITERIA_LIST, QualityCriterionInfo } from '../config';
+import { figureToSvg } from '../lib/figureRenderer';
+import { generateFallbackSvgDiagram } from '../lib/diagrams';
+import { pickMathTemplate } from '../lib/mathFigureTemplates';
 import {
   buildReferenceParts,
   callGeminiJsonApi,
   repairQuestionWithFeedback,
+  repairFigureOnly,
 } from './gemini';
 
 export interface CriterionSummary {
@@ -451,6 +455,7 @@ export async function runQualityCheck(
             topic: targetQ.topic,
             score: targetQ.score,
             orderNumber: 1,
+            needsFigure: false,
           } as BlueprintSlot);
 
         const errorMsgs = issuesForQ.map((i) => i.message);
@@ -458,6 +463,119 @@ export async function runQualityCheck(
           .map((i) => i.suggestedFix)
           .filter(Boolean) as string[];
 
+        // Kiểm tra xem câu này có lỗi thiếu hình hoặc hình không hợp lệ (Tiêu chí 10) hay không
+        const hasFigureError = issuesForQ.some((i) => i.criterion === 10);
+
+        if (hasFigureError) {
+          const slotWithFigure: BlueprintSlot = {
+            ...targetSlot,
+            needsFigure: true,
+            figureKinds:
+              targetSlot.figureKinds && targetSlot.figureKinds.length > 0
+                ? targetSlot.figureKinds
+                : ['function-graph', 'variation-table', 'sign-table', 'geometry', 'data-chart'],
+          };
+
+          // BƯỚC 1: Gọi repairFigureOnly TRƯỚC (tối đa 3 lần thử)
+          const repairedFigure = await repairFigureOnly(
+            slotWithFigure,
+            config,
+            targetQ,
+            abortSignal
+          );
+
+          if (repairedFigure) {
+            const fixedQ: Question = {
+              ...targetQ,
+              figure: repairedFigure,
+              svgDiagram: figureToSvg(repairedFigure),
+              rawParseError: undefined,
+              needsReview: false,
+              reviewNote: undefined,
+              regenerationCount: (targetQ.regenerationCount || 0) + 1,
+            };
+            return { originalId: qId, repairedQ: fixedQ };
+          }
+
+          // BƯỚC 2: Khi repairFigureOnly thất bại 3 lần, mới viết lại cả câu bằng repairQuestionWithFeedback
+          const fullRepairedQ = await repairQuestionWithFeedback(
+            slotWithFigure,
+            config,
+            targetQ,
+            errorMsgs,
+            fixes,
+            abortSignal
+          );
+
+          const isFigValid =
+            fullRepairedQ.figure &&
+            validateFigure(fullRepairedQ.figure.kind, fullRepairedQ.figure).isValid;
+
+          if (isFigValid) {
+            fullRepairedQ.svgDiagram = figureToSvg(fullRepairedQ.figure!);
+            fullRepairedQ.rawParseError = undefined;
+            return { originalId: qId, repairedQ: fullRepairedQ };
+          }
+
+          // BƯỚC 3: Nếu vẫn thất bại, dùng mẫu hình dựng sẵn bằng code (Prompt N2) nếu chủ đề khớp
+          const templateQ = pickMathTemplate(slotWithFigure, config);
+          if (templateQ) {
+            return {
+              originalId: qId,
+              repairedQ: {
+                ...templateQ,
+                id: qId,
+                slotId: targetSlot.id,
+                score: targetSlot.score,
+                regenerationCount: (targetQ.regenerationCount || 0) + 1,
+              },
+            };
+          }
+
+          const fallbackSvg = generateFallbackSvgDiagram(targetQ.question, targetQ.topic);
+          if (fallbackSvg) {
+            const codeFallbackQ: Question = {
+              ...targetQ,
+              svgDiagram: fallbackSvg,
+              needsReview: false,
+              reviewNote: undefined,
+              regenerationCount: (targetQ.regenerationCount || 0) + 1,
+            };
+            return { originalId: qId, repairedQ: codeFallbackQ };
+          }
+
+          // BƯỚC 4: Chỉ khi giáo viên bật công tắc “Cho phép đổi sang câu không cần hình” (mặc định TẮT) mới được sinh lại câu không hình
+          if (config.allowFallbackToNoFigure) {
+            const noFigSlot: BlueprintSlot = {
+              ...targetSlot,
+              needsFigure: false,
+              figureKinds: [],
+            };
+            const noFigQ = await repairQuestionWithFeedback(
+              noFigSlot,
+              config,
+              targetQ,
+              ['Chuyển sang câu hỏi lý thuyết hoặc tính toán thuần túy không dùng hình ảnh/đồ thị/bảng'],
+              ['Tuyệt đối không nhắc tới hình ảnh, bảng hoặc đồ thị trong câu dẫn.'],
+              abortSignal
+            );
+            noFigQ.figure = undefined;
+            noFigQ.svgDiagram = undefined;
+            return { originalId: qId, repairedQ: noFigQ };
+          }
+
+          // Nếu không bật đổi câu: giữ câu và gắn nhãn “Cần GV xem lại hình”
+          return {
+            originalId: qId,
+            repairedQ: {
+              ...targetQ,
+              needsReview: true,
+              reviewNote: 'Cần GV xem lại hình',
+            },
+          };
+        }
+
+        // Với các lỗi khác (không phải lỗi figure): sửa bằng repairQuestionWithFeedback
         const repairedQ = await repairQuestionWithFeedback(
           targetSlot,
           config,

@@ -346,6 +346,18 @@ export function buildBlueprintFromImportedMatrix(config: ExamConfig): BlueprintS
   const unScoredSlots: BlueprintSlot[] = preliminarySlots.map((item, idx) => {
     const orderNumber = idx + 1;
     const slotId = `slot_${item.questionType}_${item.level}_${orderNumber}`;
+    const customFig = config.customSlotFigures?.[slotId];
+    const inferred = inferSlotFigureNeed(
+      { topic: item.topic, learningOutcome: item.learningOutcome },
+      config
+    );
+    const needsFigure = customFig !== undefined ? customFig : inferred.needsFigure;
+    const figureKinds = inferred.figureKinds && inferred.figureKinds.length > 0
+      ? inferred.figureKinds
+      : needsFigure
+      ? ['function-graph', 'variation-table', 'sign-table', 'geometry', 'data-chart']
+      : [];
+
     return {
       id: slotId,
       orderNumber,
@@ -354,6 +366,8 @@ export function buildBlueprintFromImportedMatrix(config: ExamConfig): BlueprintS
       topic: item.topic,
       learningOutcome: item.learningOutcome || config.learningOutcomes,
       score: item.unitScore !== undefined ? item.unitScore : 0,
+      needsFigure,
+      figureKinds,
     };
   });
 
@@ -460,6 +474,17 @@ export function buildBlueprint(config: ExamConfig): BlueprintSlot[] {
     const orderNumber = idx + 1;
     const topicItem = assignedTopics[idx];
     const slotId = `slot_${item.questionType}_${item.level}_${orderNumber}`;
+    const customFig = config.customSlotFigures?.[slotId];
+    const inferred = inferSlotFigureNeed(
+      { topic: topicItem.name, learningOutcome: topicItem.learningOutcome || config.learningOutcomes },
+      config
+    );
+    const needsFigure = customFig !== undefined ? customFig : inferred.needsFigure;
+    const figureKinds = inferred.figureKinds && inferred.figureKinds.length > 0
+      ? inferred.figureKinds
+      : needsFigure
+      ? ['function-graph', 'variation-table', 'sign-table', 'geometry', 'data-chart']
+      : [];
 
     return {
       id: slotId,
@@ -469,6 +494,8 @@ export function buildBlueprint(config: ExamConfig): BlueprintSlot[] {
       topic: topicItem.name,
       learningOutcome: topicItem.learningOutcome || config.learningOutcomes,
       score: 0,
+      needsFigure,
+      figureKinds,
     };
   });
 
@@ -486,4 +513,76 @@ export function buildBlueprint(config: ExamConfig): BlueprintSlot[] {
  */
 export function generateBlueprintSlots(config: ExamConfig): BlueprintSlot[] {
   return buildBlueprint(config);
+}
+
+/**
+ * Suy luận tự động xem một ô câu hỏi (BlueprintSlot) có cần hình vẽ/đồ thị/bảng không
+ * Dựa trên từ khóa trong topic, learningOutcome hoặc cấu hình bài học:
+ * - đồ thị -> function-graph
+ * - bảng biến thiên -> variation-table
+ * - bảng xét dấu -> sign-table
+ * - hình chóp, lăng trụ, hình hộp, tam giác, đường tròn, mạch điện, thí nghiệm -> geometry
+ * - biểu đồ, bảng tần số -> data-chart
+ */
+export function inferSlotFigureNeed(
+  slot: Partial<BlueprintSlot>,
+  config?: ExamConfig
+): { needsFigure: boolean; figureKinds?: string[] } {
+  const text = [
+    slot.topic || '',
+    slot.learningOutcome || '',
+    config?.topicName || '',
+    config?.knowledgeScope || '',
+    config?.testContent || '',
+  ]
+    .join(' ')
+    .toLowerCase();
+
+  const kinds: string[] = [];
+
+  // 1. Đồ thị -> function-graph
+  if (text.includes('đồ thị')) {
+    kinds.push('function-graph');
+  }
+
+  // 2. Bảng biến thiên -> variation-table
+  if (text.includes('bảng biến thiên')) {
+    kinds.push('variation-table');
+  }
+
+  // 3. Bảng xét dấu -> sign-table
+  if (text.includes('bảng xét dấu') || text.includes('xét dấu')) {
+    kinds.push('sign-table');
+  }
+
+  // 4. Hình học & không gian: hình chóp, lăng trụ, hình hộp, tam giác, đường tròn, mạch điện, thí nghiệm
+  if (
+    text.includes('hình chóp') ||
+    text.includes('lăng trụ') ||
+    text.includes('hình hộp') ||
+    text.includes('tam giác') ||
+    text.includes('đường tròn') ||
+    text.includes('mạch điện') ||
+    text.includes('thí nghiệm')
+  ) {
+    kinds.push('geometry');
+  }
+
+  // 5. Biểu đồ, bảng tần số -> data-chart
+  if (text.includes('biểu đồ') || text.includes('bảng tần số') || text.includes('tần số')) {
+    kinds.push('data-chart');
+  }
+
+  const uniqueKinds = Array.from(new Set(kinds));
+  if (uniqueKinds.length > 0) {
+    return {
+      needsFigure: true,
+      figureKinds: uniqueKinds,
+    };
+  }
+
+  return {
+    needsFigure: false,
+    figureKinds: [],
+  };
 }
